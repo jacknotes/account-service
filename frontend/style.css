@@ -1,0 +1,588 @@
+:root {
+  --bg: #0f0f12;
+  --surface: #1a1a20;
+  --border: #2a2a32;
+  --text: #e8e8ed;
+  --text-muted: #888;
+  --primary: #6366f1;
+  --primary-hover: #4f46e5;
+  --danger: #ef4444;
+  --success: #22c55e;
+  --radius: 8px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: "Segoe UI", "PingFang SC", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.5;
+}
+
+.app {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.nav-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tab {
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.tab:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.tab.active {
+  color: var(--primary);
+  background: var(--surface);
+  font-weight: 500;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.current-user {
+  font-size: 14px;
+  color: var(--primary);
+  font-weight: 500;
+  margin-right: 4px;
+}
+
+.current-user::before {
+  content: "当前：";
+  color: var(--text-muted);
+  font-weight: normal;
+}
+
+/* 登录页 */
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.login-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px;
+  width: 100%;
+  max-width: 360px;
+}
+
+.login-box h1 {
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.login-subtitle {
+  text-align: center;
+  color: var(--text-muted);
+  margin-bottom: 24px;
+}
+
+.auth-form input {
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.auth-form .btn-block {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.auth-error {
+  color: var(--danger);
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.auth-hint {
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+
+.auth-switch {
+  text-align: center;
+  margin-top: 20px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.auth-switch a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.auth-switch a:hover {
+  text-decoration: underline;
+}
+
+.totp-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.totp-secret {
+  font-size: 12px;
+  word-break: break-all;
+  margin: 8px 0;
+  color: var(--text-muted);
+}
+
+#totpQR img {
+  display: block;
+  margin: 0 auto;
+}
+
+.header h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: white;
+}
+
+.btn-primary:hover {
+  background: var(--primary-hover);
+}
+
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.btn-outline:hover {
+  background: var(--surface);
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: white;
+}
+
+.btn-danger:hover {
+  opacity: 0.9;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.filter {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.filter-row label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.date-field {
+  position: relative;
+  display: inline-block;
+  flex: 1;
+  min-width: 160px;
+}
+.date-field input[type="date"] {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  cursor: pointer;
+  z-index: 2;
+  opacity: 0.01;
+  border: none;
+  background: transparent;
+  font-size: 16px;
+}
+.date-display {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+  padding: 0 12px;
+  height: 38px;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 14px;
+}
+.date-field.has-value .date-display {
+  color: var(--text);
+}
+.date-field:has(input[type="date"]:focus) .date-display {
+  border-color: var(--primary);
+}
+
+.filter-row input[type="text"] {
+  flex: 1;
+  min-width: 160px;
+  height: 38px;
+  box-sizing: border-box;
+}
+
+.filter-row select {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  min-width: 100px;
+}
+
+#summaryDailyParams,
+#summaryMonthlyParams,
+#summaryYearlyParams {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+input {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.main {
+  background: var(--surface);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th,
+.table td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.table th {
+  font-weight: 600;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.amount-income {
+  color: var(--success);
+}
+
+.amount-expense {
+  color: var(--danger);
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+}
+
+.pagination button {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.pagination button:hover:not(:disabled) {
+  background: var(--surface);
+}
+
+.pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pagination span {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Modal - 关闭时 display:none 完全移出渲染，避免遮挡下方按钮 */
+.modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal.show {
+  display: flex;
+}
+
+.modal-content {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 24px;
+  width: 100%;
+  max-width: 400px;
+  border: 1px solid var(--border);
+}
+
+.modal-sm {
+  max-width: 320px;
+}
+
+.modal-wide {
+  max-width: 420px;
+}
+
+.settings-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.settings-section {
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-section:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.settings-section h3 {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.modal-header h2 {
+  font-size: 1.25rem;
+}
+
+.close {
+  font-size: 24px;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.close:hover {
+  color: var(--text);
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.form-group input {
+  width: 100%;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.empty {
+  text-align: center;
+  padding: 48px;
+  color: var(--text-muted);
+}
+
+.loading {
+  text-align: center;
+  padding: 48px;
+  color: var(--text-muted);
+}
+
+/* 汇总 */
+.summary-section .filter,
+.report-section .filter {
+  margin-bottom: 20px;
+}
+
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.summary-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  text-align: center;
+}
+
+.summary-card .label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.summary-card .value {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.summary-card.income .value { color: var(--success); }
+.summary-card.expense .value { color: var(--danger); }
+.summary-card.balance .value { color: var(--primary); }
+
+.summary-detail {
+  background: var(--surface);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-top: 16px;
+}
+
+.summary-detail h3 {
+  padding: 12px 16px;
+  font-size: 14px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.report-content {
+  background: var(--surface);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.report-overview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 16px;
+  padding: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.report-overview .stat {
+  text-align: center;
+}
+
+.report-overview .stat .label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.report-overview .stat .value {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.report-section h3 {
+  padding: 12px 16px;
+  font-size: 14px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}

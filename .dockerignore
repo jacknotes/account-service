@@ -1,0 +1,7 @@
+.git
+.history
+*.db
+*.exe
+data/
+*.md
+.DS_Store

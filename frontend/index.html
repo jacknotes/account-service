@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>记账本</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <h1>📒 记账本</h1>
+      <nav class="nav-tabs">
+        <button class="tab active" data-tab="records">记账</button>
+        <button class="tab" data-tab="summary">汇总</button>
+        <button class="tab" data-tab="report">报表</button>
+        <button class="tab" data-tab="users" id="tabUsers" style="display:none">用户管理</button>
+        <button class="tab" data-tab="logs" id="tabLogs" style="display:none">操作日志</button>
+      </nav>
+      <div class="header-actions">
+        <span class="current-user" id="currentUserName"></span>
+        <button class="btn btn-outline btn-sm" id="btnSettings">账户设置</button>
+        <button class="btn btn-outline btn-sm" id="btnLogout">退出</button>
+        <button class="btn btn-primary" id="btnAdd">+ 添加记录</button>
+      </div>
+    </header>
+
+    <!-- 记账页 -->
+    <section id="sectionRecords">
+    <div class="filter">
+      <div class="filter-row">
+        <label>起始日期</label>
+        <span class="date-field"><span class="date-display" data-for="startDate"></span><input type="date" id="startDate" aria-label="起始日期" /></span>
+        <label>结束日期</label>
+        <span class="date-field"><span class="date-display" data-for="endDate"></span><input type="date" id="endDate" aria-label="结束日期" /></span>
+        <input type="text" id="keyword" placeholder="关键字搜索（描述/分类）" />
+        <button class="btn" id="btnSearch">查询</button>
+        <button class="btn btn-outline" id="btnReset">重置</button>
+      </div>
+    </div>
+
+    <main class="main">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>日期</th>
+            <th>金额</th>
+            <th>分类</th>
+            <th>描述</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+      <div class="pagination" id="pagination"></div>
+    </main>
+    </section>
+
+    <!-- 汇总页 -->
+    <section class="summary-section" id="sectionSummary" style="display:none">
+      <div class="filter">
+        <div class="filter-row">
+          <label>汇总类型</label>
+          <select id="summaryType">
+            <option value="daily">每日</option>
+            <option value="monthly">每月</option>
+            <option value="yearly">每年</option>
+          </select>
+          <div id="summaryDailyParams">
+            <label>日期</label>
+            <span class="date-field"><span class="date-display" data-for="summaryDate"></span><input type="date" id="summaryDate" aria-label="日期" /></span>
+          </div>
+          <div id="summaryMonthlyParams" style="display:none">
+            <label>年份</label>
+            <input type="number" id="summaryYear" min="2000" max="2100" placeholder="年" style="width:80px" />
+            <label>月份</label>
+            <input type="number" id="summaryMonth" min="1" max="12" placeholder="月" style="width:60px" />
+          </div>
+          <div id="summaryYearlyParams" style="display:none">
+            <label>年份</label>
+            <input type="number" id="summaryYearOnly" min="2000" max="2100" placeholder="年" style="width:80px" />
+          </div>
+          <button class="btn" id="btnSummary">查询</button>
+        </div>
+      </div>
+      <div class="summary-cards" id="summaryCards"></div>
+      <div class="summary-detail" id="summaryDetail"></div>
+    </section>
+
+    <!-- 报表页 -->
+    <section class="report-section" id="sectionReport" style="display:none">
+      <div class="filter">
+        <div class="filter-row">
+          <label>起始日期</label>
+          <span class="date-field"><span class="date-display" data-for="reportStartDate"></span><input type="date" id="reportStartDate" aria-label="起始日期" /></span>
+          <label>结束日期</label>
+          <span class="date-field"><span class="date-display" data-for="reportEndDate"></span><input type="date" id="reportEndDate" aria-label="结束日期" /></span>
+          <button class="btn" id="btnReport">生成报表</button>
+        </div>
+      </div>
+      <div class="report-content" id="reportContent"></div>
+    </section>
+
+    <!-- 用户管理页（管理员） -->
+    <section class="users-section" id="sectionUsers" style="display:none">
+      <div class="filter">
+        <button class="btn btn-primary" id="btnAddUserModal">+ 添加用户</button>
+      </div>
+      <div class="main">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>用户名</th>
+              <th>角色</th>
+              <th>创建时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="usersTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 操作日志页（管理员） -->
+    <section class="logs-section" id="sectionLogs" style="display:none">
+      <div class="filter">
+        <div class="filter-row">
+          <label>操作类型</label>
+          <select id="logActionFilter">
+            <option value="">全部</option>
+            <option value="login">登录</option>
+            <option value="create_record">创建记账</option>
+            <option value="update_record">更新记账</option>
+            <option value="delete_record">删除记账</option>
+            <option value="add_user">添加用户</option>
+            <option value="update_user">更新用户</option>
+            <option value="delete_user">删除用户</option>
+            <option value="change_password">修改密码</option>
+            <option value="totp_enable">启用TOTP</option>
+            <option value="totp_disable">关闭TOTP</option>
+          </select>
+          <button class="btn" id="btnLoadLogs">查询</button>
+        </div>
+      </div>
+      <div class="main">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>用户</th>
+              <th>操作</th>
+              <th>详情</th>
+              <th>IP</th>
+            </tr>
+          </thead>
+          <tbody id="logsTableBody"></tbody>
+        </table>
+        <div class="pagination" id="logsPagination"></div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Modal 放在 .app 外，避免遮挡主内容 -->
+  <div class="modal" id="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modalTitle">添加记录</h2>
+        <span class="close" id="modalClose">&times;</span>
+      </div>
+      <form id="recordForm">
+        <input type="hidden" id="recordId" />
+        <div class="form-group">
+          <label>日期 *</label>
+          <span class="date-field"><span class="date-display" data-for="formDate"></span><input type="date" id="formDate" required aria-label="日期" /></span>
+        </div>
+        <div class="form-group">
+          <label>金额 *</label>
+          <input type="number" id="formAmount" step="0.01" placeholder="正数收入，负数支出" required />
+        </div>
+        <div class="form-group">
+          <label>分类</label>
+          <input type="text" id="formCategory" placeholder="如：餐饮、交通" />
+        </div>
+        <div class="form-group">
+          <label>描述</label>
+          <input type="text" id="formDescription" placeholder="备注说明" />
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-outline" id="btnCancel">取消</button>
+          <button type="submit" class="btn btn-primary">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" id="settingsModal">
+    <div class="modal-content modal-wide">
+      <div class="modal-header">
+        <h2>账户设置</h2>
+        <span class="close" id="settingsModalClose">&times;</span>
+      </div>
+      <div class="settings-sections">
+        <section class="settings-section">
+          <h3>修改密码</h3>
+          <div class="form-group">
+            <label>当前密码</label>
+            <input type="password" id="changePwdOld" placeholder="当前密码" />
+          </div>
+          <div class="form-group">
+            <label>新密码</label>
+            <input type="password" id="changePwdNew" placeholder="新密码（至少6位）" />
+          </div>
+          <button class="btn btn-primary" id="btnChangePassword">修改密码</button>
+        </section>
+        <section class="settings-section" id="settingsAddUserSection" style="display:none">
+          <h3>添加用户</h3>
+          <p class="auth-hint">管理员请使用「用户管理」 tab 管理用户</p>
+        </section>
+        <section class="settings-section">
+          <h3>双重验证 (TOTP)</h3>
+          <button class="btn btn-outline" id="btnOpenTOTP">TOTP 设置</button>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="totpModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>双重验证 (TOTP)</h2>
+        <span class="close" id="totpModalClose">&times;</span>
+      </div>
+      <div id="totpEnableArea">
+        <p class="totp-hint">使用 Google Authenticator、Microsoft Authenticator 等应用扫码绑定</p>
+        <div id="totpQR"></div>
+        <p class="totp-secret" id="totpSecretText"></p>
+        <div class="form-group">
+          <label>输入验证码确认</label>
+          <input type="text" id="totpEnableCode" placeholder="6位验证码" maxlength="6" />
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" id="btnTOTPEnable">启用</button>
+        </div>
+      </div>
+      <div id="totpDisableArea" style="display:none">
+        <div class="form-group">
+          <label>密码</label>
+          <input type="password" id="totpDisablePassword" placeholder="当前密码" />
+        </div>
+        <div class="form-group">
+          <label>TOTP 验证码</label>
+          <input type="text" id="totpDisableCode" placeholder="6位验证码" maxlength="6" />
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-danger" id="btnTOTPDisable">关闭 TOTP</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="userModal">
+    <div class="modal-content modal-wide">
+      <div class="modal-header">
+        <h2 id="userModalTitle">添加用户</h2>
+        <span class="close" id="userModalClose">&times;</span>
+      </div>
+      <div id="userFormArea">
+        <div class="form-group">
+          <label>用户名</label>
+          <input type="text" id="userFormUsername" placeholder="用户名" />
+        </div>
+        <div class="form-group" id="userFormPasswordGroup">
+          <label>密码</label>
+          <input type="password" id="userFormPassword" placeholder="密码（至少6位）" />
+        </div>
+        <div class="form-group" id="userFormRoleGroup" style="display:none">
+          <label>角色</label>
+          <select id="userFormRole">
+            <option value="user">普通用户</option>
+            <option value="admin">管理员</option>
+          </select>
+        </div>
+        <div class="form-group" id="userFormNewPasswordGroup" style="display:none">
+          <label>新密码</label>
+          <input type="password" id="userFormNewPassword" placeholder="新密码（至少6位）" />
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" id="btnUserFormSubmit">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="userDeleteModal">
+    <div class="modal-content modal-sm">
+      <p>确定删除该用户吗？</p>
+      <div class="form-actions">
+        <button class="btn btn-outline" id="btnUserDeleteCancel">取消</button>
+        <button class="btn btn-danger" id="btnUserDeleteConfirm">删除</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="deleteModal">
+    <div class="modal-content modal-sm">
+      <p>确定删除该记录吗？</p>
+      <div class="form-actions">
+        <button class="btn btn-outline" id="btnDeleteCancel">取消</button>
+        <button class="btn btn-danger" id="btnDeleteConfirm">删除</button>
+      </div>
+    </div>
+  </div>
+  <script src="auth.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

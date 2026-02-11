@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>登录 - 记账本</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="login-page">
+    <div class="login-box">
+      <h1>📒 记账本</h1>
+      <p class="login-subtitle">请登录</p>
+
+      <div id="loginForm" class="auth-form">
+        <input type="text" id="loginUsername" placeholder="用户名" autocomplete="username" />
+        <input type="password" id="loginPassword" placeholder="密码" autocomplete="current-password" />
+        <div id="totpRow" style="display:none">
+          <input type="text" id="loginTOTP" placeholder="TOTP 验证码（6位）" maxlength="6" />
+        </div>
+        <div id="loginError" class="auth-error"></div>
+        <button type="button" class="btn btn-primary btn-block" id="btnLogin">登录</button>
+      </div>
+
+      <div id="registerForm" class="auth-form" style="display:none">
+        <p class="auth-hint">首次使用，请注册账号</p>
+        <input type="text" id="regUsername" placeholder="用户名" autocomplete="username" />
+        <input type="password" id="regPassword" placeholder="密码" autocomplete="new-password" />
+        <div id="regError" class="auth-error"></div>
+        <button type="button" class="btn btn-primary btn-block" id="btnRegister">注册</button>
+        <button type="button" class="btn btn-outline btn-block" id="btnShowLogin">返回登录</button>
+      </div>
+
+      <p class="auth-switch" id="authSwitch" style="display:none">
+        <span id="switchHint">尚无账号？</span>
+        <a href="#" id="btnSwitch">注册</a>
+      </p>
+    </div>
+  </div>
+  <script src="auth.js"></script>
+  <script src="login.js"></script>
+</body>
+</html>

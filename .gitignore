@@ -1,0 +1,29 @@
+# 数据库（含用户密码哈希、TOTP 密钥等敏感数据）
+data/
+*.db
+
+# 可执行文件
+*.exe
+account-service
+
+# 环境变量与密钥（勿提交真实配置）
+.env
+.env.local
+.env.*.local
+
+# 编辑器/IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 历史记录（可能包含敏感编辑）
+.history/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 构建产物
+dist/
+build/
