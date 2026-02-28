@@ -1,6 +1,8 @@
 # 构建阶段
 FROM golang:1.21-alpine AS builder
 
+ENV GOPROXY=https://goproxy.cn,direct
+
 WORKDIR /build
 
 # 复制依赖
