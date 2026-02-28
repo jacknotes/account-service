@@ -6,6 +6,19 @@ if (!isLoggedIn()) {
 let currentPage = 1;
 const pageSize = 15;
 let deleteTargetId = null;
+let currentRecords = [];
+let currentSort = { field: 'date', dir: 'desc' }; // 默认按日期倒序
+let currentSummaryData = null;
+let currentReportData = null;
+let currentUsers = [];
+let currentLogs = [];
+// 各区域排序状态（用于正序 / 倒序切换）
+let summarySort = { field: null, dir: 'desc' };
+let summaryBreakdownSort = { field: null, dir: 'desc' };
+let reportDailySort = { field: null, dir: 'desc' };
+let reportCatSort = { field: null, dir: 'desc' };
+let usersSort = { field: null, dir: 'desc' };
+let logsSort = { field: null, dir: 'desc' };
 
 // DOM
 const tableBody = document.getElementById('tableBody');
@@ -19,6 +32,12 @@ const formDate = document.getElementById('formDate');
 const formAmount = document.getElementById('formAmount');
 const formCategory = document.getElementById('formCategory');
 const formDescription = document.getElementById('formDescription');
+
+const thDate = document.getElementById('thDate');
+const thAmount = document.getElementById('thAmount');
+const thCategory = document.getElementById('thCategory');
+
+const btnThemeToggle = document.getElementById('btnThemeToggle');
 
 const startDate = document.getElementById('startDate');
 const endDate = document.getElementById('endDate');
@@ -40,12 +59,36 @@ async function fetchRecords(page = 1) {
   return res.json();
 }
 
+function sortRecords(list) {
+  if (!Array.isArray(list) || list.length === 0) return list;
+  const { field, dir } = currentSort;
+  const factor = dir === 'desc' ? -1 : 1;
+  return [...list].sort((a, b) => {
+    if (field === 'date') {
+      // YYYY-MM-DD 字符串比较即可
+      return a.date === b.date ? 0 : (a.date > b.date ? factor : -factor);
+    }
+    if (field === 'amount') {
+      const av = a.amount || 0;
+      const bv = b.amount || 0;
+      return av === bv ? 0 : (av > bv ? factor : -factor);
+    }
+    if (field === 'category') {
+      const av = (a.category || '').toString();
+      const bv = (b.category || '').toString();
+      return av === bv ? 0 : (av > bv ? factor : -factor);
+    }
+    return 0;
+  });
+}
+
 function renderTable(data) {
-  if (!data.data || data.data.length === 0) {
+  const list = sortRecords(data.data || []);
+  if (list.length === 0) {
     tableBody.innerHTML = '<tr><td colspan="5" class="empty">暂无记录</td></tr>';
     return;
   }
-  tableBody.innerHTML = data.data.map(r => `
+  tableBody.innerHTML = list.map(r => `
     <tr>
       <td>${r.date}</td>
       <td class="${r.amount >= 0 ? 'amount-income' : 'amount-expense'}">
@@ -88,6 +131,7 @@ async function loadPage(page = 1) {
   tableBody.innerHTML = '<tr><td colspan="5" class="loading">加载中...</td></tr>';
   try {
     const data = await fetchRecords(page);
+    currentRecords = data.data || [];
     currentPage = page;
     renderTable(data);
     renderPagination(data.total, data.page);
@@ -101,6 +145,7 @@ function openAdd() {
   recordId.value = '';
   recordForm.reset();
   formDate.value = new Date().toISOString().slice(0, 10);
+  formAmount.value = '';
   syncDateDisplay('formDate');
   modal.classList.add('show');
 }
@@ -113,6 +158,7 @@ async function openEdit(id) {
     recordId.value = r.id;
     formDate.value = r.date;
     syncDateDisplay('formDate');
+    formAmount.value = r.amount != null ? r.amount.toFixed(2) : '';
     formCategory.value = r.category || '';
     formDescription.value = r.description || '';
     modalTitle.textContent = '编辑记录';
@@ -299,15 +345,26 @@ document.getElementById('btnReset').addEventListener('click', () => {
 document.getElementById('btnDeleteCancel').addEventListener('click', closeDeleteModal);
 document.getElementById('btnDeleteConfirm').addEventListener('click', doDelete);
 
-modal.addEventListener('click', (e) => {
-  if (e.target === modal) closeModal();
-});
 deleteModal.addEventListener('click', (e) => {
   if (e.target === deleteModal) closeDeleteModal();
 });
 document.getElementById('settingsModal').addEventListener('click', (e) => {
   if (e.target.id === 'settingsModal') e.target.classList.remove('show');
 });
+
+function changeSort(field) {
+  if (!field) return;
+  if (currentSort.field === field) {
+    currentSort.dir = currentSort.dir === 'desc' ? 'asc' : 'desc';
+  } else {
+    currentSort = { field, dir: 'desc' };
+  }
+  renderTable({ data: currentRecords });
+}
+
+if (thDate) thDate.addEventListener('click', () => changeSort('date'));
+if (thAmount) thAmount.addEventListener('click', () => changeSort('amount'));
+if (thCategory) thCategory.addEventListener('click', () => changeSort('category'));
 
 // =====  Tab 切换 =====
 const sectionRecords = document.getElementById('sectionRecords');
@@ -365,7 +422,27 @@ async function loadUsers() {
       tbody.innerHTML = '<tr><td colspan="5" class="empty">暂无用户</td></tr>';
       return;
     }
-    tbody.innerHTML = data.data.map(u => `
+    currentUsers = data.data;
+    renderUsersTable();
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty">${e.message}</td></tr>`;
+  }
+}
+
+function renderUsersTable(sortField) {
+  const tbody = document.getElementById('usersTableBody');
+  if (!tbody) return;
+  let list = [...currentUsers];
+  if (sortField === 'id') {
+    list = sortWithToggle(currentUsers, 'id', 'number', usersSort);
+  } else if (sortField === 'username') {
+    list = sortWithToggle(currentUsers, 'username', 'string', usersSort);
+  } else if (sortField === 'role') {
+    list = sortWithToggle(currentUsers, 'role', 'string', usersSort);
+  } else if (sortField === 'created_at') {
+    list = sortWithToggle(currentUsers, 'created_at', 'string', usersSort);
+  }
+  tbody.innerHTML = list.map(u => `
       <tr>
         <td>${u.id}</td>
         <td>${u.username}</td>
@@ -389,9 +466,6 @@ async function loadUsers() {
     tbody.querySelectorAll('.btn-del-user').forEach(btn => {
       btn.addEventListener('click', () => openDeleteUser(Number(btn.dataset.id)));
     });
-  } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="5" class="empty">${e.message}</td></tr>`;
-  }
 }
 
 function openAddUser() {
@@ -519,6 +593,16 @@ document.getElementById('userDeleteModal').addEventListener('click', (e) => {
   if (e.target.id === 'userDeleteModal') document.getElementById('userDeleteModal').classList.remove('show');
 });
 
+// 用户表头排序
+const usersThId = document.getElementById('usersThId');
+const usersThUsername = document.getElementById('usersThUsername');
+const usersThRole = document.getElementById('usersThRole');
+const usersThCreatedAt = document.getElementById('usersThCreatedAt');
+usersThId && usersThId.addEventListener('click', () => renderUsersTable('id'));
+usersThUsername && usersThUsername.addEventListener('click', () => renderUsersTable('username'));
+usersThRole && usersThRole.addEventListener('click', () => renderUsersTable('role'));
+usersThCreatedAt && usersThCreatedAt.addEventListener('click', () => renderUsersTable('created_at'));
+
 // ===== 操作日志（管理员） =====
 let logsPage = 1;
 const logsPageSize = 20;
@@ -542,15 +626,8 @@ async function loadLogs(page = 1) {
       paginationEl.innerHTML = '';
       return;
     }
-    tbody.innerHTML = data.data.map(l => `
-      <tr>
-        <td>${l.created_at ? l.created_at.slice(0, 19).replace('T', ' ') : '-'}</td>
-        <td>${l.username}</td>
-        <td>${l.action}</td>
-        <td>${l.detail || '-'}</td>
-        <td>${l.ip || '-'}</td>
-      </tr>
-    `).join('');
+    currentLogs = data.data;
+    renderLogsTable();
     const totalPages = Math.ceil(data.total / logsPageSize) || 1;
     paginationEl.innerHTML = `
       <button ${page <= 1 ? 'disabled' : ''} data-page="${page - 1}">上一页</button>
@@ -564,7 +641,37 @@ async function loadLogs(page = 1) {
     tbody.innerHTML = `<tr><td colspan="5" class="empty">${e.message}</td></tr>`;
   }
 }
+
+function renderLogsTable(sortField) {
+  const tbody = document.getElementById('logsTableBody');
+  if (!tbody) return;
+  let list = [...currentLogs];
+  if (sortField === 'created_at') {
+    list = sortWithToggle(currentLogs, 'created_at', 'string', logsSort);
+  } else if (sortField === 'username') {
+    list = sortWithToggle(currentLogs, 'username', 'string', logsSort);
+  } else if (sortField === 'action') {
+    list = sortWithToggle(currentLogs, 'action', 'string', logsSort);
+  }
+  tbody.innerHTML = list.map(l => `
+      <tr>
+        <td>${l.created_at ? l.created_at.slice(0, 19).replace('T', ' ') : '-'}</td>
+        <td>${l.username}</td>
+        <td>${l.action}</td>
+        <td>${l.detail || '-'}</td>
+        <td>${l.ip || '-'}</td>
+      </tr>
+    `).join('');
+}
 document.getElementById('btnLoadLogs')?.addEventListener('click', () => loadLogs(1));
+
+// 日志表头排序
+const logsThTime = document.getElementById('logsThTime');
+const logsThUser = document.getElementById('logsThUser');
+const logsThAction = document.getElementById('logsThAction');
+logsThTime && logsThTime.addEventListener('click', () => renderLogsTable('created_at'));
+logsThUser && logsThUser.addEventListener('click', () => renderLogsTable('username'));
+logsThAction && logsThAction.addEventListener('click', () => renderLogsTable('action'));
 
 // ===== 汇总 =====
 const summaryType = document.getElementById('summaryType');
@@ -612,6 +719,7 @@ async function loadSummary() {
     const res = await fetchAuth(url);
     if (!res.ok) throw new Error('获取失败');
     const data = await res.json();
+    currentSummaryData = data;
     renderSummaryCards(data);
     renderSummaryDetail(data);
   } catch (e) {
@@ -645,7 +753,14 @@ function renderSummaryDetail(data) {
     summaryDetail.innerHTML = `
       <h3>明细</h3>
       <table class="table">
-        <thead><tr><th>日期</th><th>金额</th><th>分类</th><th>描述</th></tr></thead>
+        <thead>
+          <tr>
+            <th id="summaryThDate">日期</th>
+            <th id="summaryThAmount">金额</th>
+            <th id="summaryThCategory">分类</th>
+            <th>描述</th>
+          </tr>
+        </thead>
         <tbody>
           ${data.records.map(r => `
             <tr>
@@ -664,7 +779,15 @@ function renderSummaryDetail(data) {
     summaryDetail.innerHTML = `
       <h3>分项</h3>
       <table class="table">
-        <thead><tr><th>日期/月份</th><th>收入</th><th>支出</th><th>结余</th><th>笔数</th></tr></thead>
+        <thead>
+          <tr>
+            <th id="summaryThPeriod">日期/月份</th>
+            <th id="summaryThIncome">收入</th>
+            <th id="summaryThExpense">支出</th>
+            <th id="summaryThBalance">结余</th>
+            <th id="summaryThCount">笔数</th>
+          </tr>
+        </thead>
         <tbody>
           ${data.breakdown.map(b => `
             <tr>
@@ -680,6 +803,88 @@ function renderSummaryDetail(data) {
     `;
   } else {
     summaryDetail.innerHTML = '<h3>明细</h3><div class="empty">暂无数据</div>';
+  }
+  attachSummarySortHandlers();
+}
+
+function sortDesc(a, b, key, type) {
+  if (type === 'number') {
+    const av = Number(a[key] || 0);
+    const bv = Number(b[key] || 0);
+    return bv - av;
+  }
+  const av = (a[key] || '').toString();
+  const bv = (b[key] || '').toString();
+  return bv > av ? 1 : (bv < av ? -1 : 0);
+}
+
+function sortAsc(a, b, key, type) {
+  if (type === 'number') {
+    const av = Number(a[key] || 0);
+    const bv = Number(b[key] || 0);
+    return av - bv;
+  }
+  const av = (a[key] || '').toString();
+  const bv = (b[key] || '').toString();
+  return av > bv ? 1 : (av < bv ? -1 : 0);
+}
+
+function sortWithToggle(list, key, type, state) {
+  if (!Array.isArray(list)) return [];
+  if (state.field === key) {
+    state.dir = state.dir === 'desc' ? 'asc' : 'desc';
+  } else {
+    state.field = key;
+    state.dir = 'desc';
+  }
+  const cmp = state.dir === 'desc' ? sortDesc : sortAsc;
+  return [...list].sort((a, b) => cmp(a, b, key, type));
+}
+
+function attachSummarySortHandlers() {
+  if (!currentSummaryData) return;
+  if (currentSummaryData.records && currentSummaryData.records.length > 0) {
+    const thDate = document.getElementById('summaryThDate');
+    const thAmount = document.getElementById('summaryThAmount');
+    const thCategory = document.getElementById('summaryThCategory');
+    thDate && (thDate.onclick = () => {
+      const list = sortWithToggle(currentSummaryData.records, 'date', 'string', summarySort);
+      renderSummaryDetail({ records: list });
+    });
+    thAmount && (thAmount.onclick = () => {
+      const list = sortWithToggle(currentSummaryData.records, 'amount', 'number', summarySort);
+      renderSummaryDetail({ records: list });
+    });
+    thCategory && (thCategory.onclick = () => {
+      const list = sortWithToggle(currentSummaryData.records, 'category', 'string', summarySort);
+      renderSummaryDetail({ records: list });
+    });
+  } else if (currentSummaryData.breakdown && currentSummaryData.breakdown.length > 0) {
+    const thPeriod = document.getElementById('summaryThPeriod');
+    const thIncome = document.getElementById('summaryThIncome');
+    const thExpense = document.getElementById('summaryThExpense');
+    const thBalance = document.getElementById('summaryThBalance');
+    const thCount = document.getElementById('summaryThCount');
+    thPeriod && (thPeriod.onclick = () => {
+      const list = sortWithToggle(currentSummaryData.breakdown, 'period', 'string', summaryBreakdownSort);
+      renderSummaryDetail({ breakdown: list });
+    });
+    thIncome && (thIncome.onclick = () => {
+      const list = sortWithToggle(currentSummaryData.breakdown, 'income', 'number', summaryBreakdownSort);
+      renderSummaryDetail({ breakdown: list });
+    });
+    thExpense && (thExpense.onclick = () => {
+      const list = sortWithToggle(currentSummaryData.breakdown, 'expense', 'number', summaryBreakdownSort);
+      renderSummaryDetail({ breakdown: list });
+    });
+    thBalance && (thBalance.onclick = () => {
+      const list = sortWithToggle(currentSummaryData.breakdown, 'balance', 'number', summaryBreakdownSort);
+      renderSummaryDetail({ breakdown: list });
+    });
+    thCount && (thCount.onclick = () => {
+      const list = sortWithToggle(currentSummaryData.breakdown, 'count', 'number', summaryBreakdownSort);
+      renderSummaryDetail({ breakdown: list });
+    });
   }
 }
 
@@ -707,6 +912,7 @@ async function loadReport() {
     const res = await fetchAuth(`${API}/report?start_date=${start}&end_date=${end}`);
     if (!res.ok) throw new Error('生成失败');
     const data = await res.json();
+    currentReportData = data;
     renderReport(data);
   } catch (e) {
     reportContent.innerHTML = `<div class="empty">${e.message}</div>`;
@@ -726,7 +932,15 @@ function renderReport(data) {
     html += `
       <h3>按日统计</h3>
       <table class="table">
-        <thead><tr><th>日期</th><th>收入</th><th>支出</th><th>结余</th><th>笔数</th></tr></thead>
+        <thead>
+          <tr>
+            <th id="reportThPeriod">日期</th>
+            <th id="reportThIncome">收入</th>
+            <th id="reportThExpense">支出</th>
+            <th id="reportThBalance">结余</th>
+            <th id="reportThCount">笔数</th>
+          </tr>
+        </thead>
         <tbody>
           ${data.daily.map(d => `
             <tr>
@@ -745,7 +959,15 @@ function renderReport(data) {
     html += `
       <h3>按分类统计</h3>
       <table class="table">
-        <thead><tr><th>分类</th><th>收入</th><th>支出</th><th>合计</th><th>笔数</th></tr></thead>
+        <thead>
+          <tr>
+            <th id="reportThCat">分类</th>
+            <th id="reportThCatIncome">收入</th>
+            <th id="reportThCatExpense">支出</th>
+            <th id="reportThCatTotal">合计</th>
+            <th id="reportThCatCount">笔数</th>
+          </tr>
+        </thead>
         <tbody>
           ${data.by_category.map(c => `
             <tr>
@@ -763,6 +985,65 @@ function renderReport(data) {
     `;
   }
   reportContent.innerHTML = html;
+  attachReportSortHandlers();
+}
+
+function attachReportSortHandlers() {
+  if (!currentReportData) return;
+  if (currentReportData.daily && currentReportData.daily.length > 0) {
+    const thP = document.getElementById('reportThPeriod');
+    const thI = document.getElementById('reportThIncome');
+    const thE = document.getElementById('reportThExpense');
+    const thB = document.getElementById('reportThBalance');
+    const thC = document.getElementById('reportThCount');
+    thP && (thP.onclick = () => {
+      const list = sortWithToggle(currentReportData.daily, 'period', 'string', reportDailySort);
+      renderReport({ ...currentReportData, daily: list });
+    });
+    thI && (thI.onclick = () => {
+      const list = sortWithToggle(currentReportData.daily, 'income', 'number', reportDailySort);
+      renderReport({ ...currentReportData, daily: list });
+    });
+    thE && (thE.onclick = () => {
+      const list = sortWithToggle(currentReportData.daily, 'expense', 'number', reportDailySort);
+      renderReport({ ...currentReportData, daily: list });
+    });
+    thB && (thB.onclick = () => {
+      const list = sortWithToggle(currentReportData.daily, 'balance', 'number', reportDailySort);
+      renderReport({ ...currentReportData, daily: list });
+    });
+    thC && (thC.onclick = () => {
+      const list = sortWithToggle(currentReportData.daily, 'count', 'number', reportDailySort);
+      renderReport({ ...currentReportData, daily: list });
+    });
+  }
+  if (currentReportData.by_category && currentReportData.by_category.length > 0) {
+    const thCat = document.getElementById('reportThCat');
+    const thI2 = document.getElementById('reportThCatIncome');
+    const thE2 = document.getElementById('reportThCatExpense');
+    const thT2 = document.getElementById('reportThCatTotal');
+    const thC2 = document.getElementById('reportThCatCount');
+    thCat && (thCat.onclick = () => {
+      const list = sortWithToggle(currentReportData.by_category, 'category', 'string', reportCatSort);
+      renderReport({ ...currentReportData, by_category: list });
+    });
+    thI2 && (thI2.onclick = () => {
+      const list = sortWithToggle(currentReportData.by_category, 'income', 'number', reportCatSort);
+      renderReport({ ...currentReportData, by_category: list });
+    });
+    thE2 && (thE2.onclick = () => {
+      const list = sortWithToggle(currentReportData.by_category, 'expense', 'number', reportCatSort);
+      renderReport({ ...currentReportData, by_category: list });
+    });
+    thT2 && (thT2.onclick = () => {
+      const list = sortWithToggle(currentReportData.by_category, 'total', 'number', reportCatSort);
+      renderReport({ ...currentReportData, by_category: list });
+    });
+    thC2 && (thC2.onclick = () => {
+      const list = sortWithToggle(currentReportData.by_category, 'count', 'number', reportCatSort);
+      renderReport({ ...currentReportData, by_category: list });
+    });
+  }
 }
 
 document.getElementById('btnReport').addEventListener('click', loadReport);
@@ -801,5 +1082,32 @@ function initDateDisplays() {
 }
 initDateDisplays();
 
+// 主题切换
+function initTheme() {
+  const saved = localStorage.getItem('theme') || 'dark';
+  const body = document.body;
+  if (saved === 'light') {
+    body.classList.add('theme-light');
+    if (btnThemeToggle) btnThemeToggle.textContent = '☀️ 浅色';
+  } else {
+    body.classList.remove('theme-light');
+    if (btnThemeToggle) btnThemeToggle.textContent = '🌙 深色';
+  }
+}
+
+function toggleTheme() {
+  const body = document.body;
+  const isLight = body.classList.toggle('theme-light');
+  localStorage.setItem('theme', isLight ? 'light' : 'dark');
+  if (btnThemeToggle) {
+    btnThemeToggle.textContent = isLight ? '☀️ 浅色' : '🌙 深色';
+  }
+}
+
+if (btnThemeToggle) {
+  btnThemeToggle.addEventListener('click', toggleTheme);
+}
+
 // 初始加载
+initTheme();
 initUserRole().then(() => loadPage());

@@ -18,6 +18,7 @@
         <button class="tab" data-tab="logs" id="tabLogs" style="display:none">操作日志</button>
       </nav>
       <div class="header-actions">
+        <button class="btn btn-outline btn-sm" id="btnThemeToggle">🌙 深色</button>
         <span class="current-user" id="currentUserName"></span>
         <button class="btn btn-outline btn-sm" id="btnSettings">账户设置</button>
         <button class="btn btn-outline btn-sm" id="btnLogout">退出</button>
@@ -43,9 +44,9 @@
       <table class="table">
         <thead>
           <tr>
-            <th>日期</th>
-            <th>金额</th>
-            <th>分类</th>
+            <th id="thDate">日期</th>
+            <th id="thAmount">金额</th>
+            <th id="thCategory">分类</th>
             <th>描述</th>
             <th>操作</th>
           </tr>
@@ -110,10 +111,10 @@
         <table class="table">
           <thead>
             <tr>
-              <th>ID</th>
-              <th>用户名</th>
-              <th>角色</th>
-              <th>创建时间</th>
+              <th id="usersThId">ID</th>
+              <th id="usersThUsername">用户名</th>
+              <th id="usersThRole">角色</th>
+              <th id="usersThCreatedAt">创建时间</th>
               <th>操作</th>
             </tr>
           </thead>
@@ -147,9 +148,9 @@
         <table class="table">
           <thead>
             <tr>
-              <th>时间</th>
-              <th>用户</th>
-              <th>操作</th>
+              <th id="logsThTime">时间</th>
+              <th id="logsThUser">用户</th>
+              <th id="logsThAction">操作</th>
               <th>详情</th>
               <th>IP</th>
             </tr>

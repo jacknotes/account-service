@@ -1,6 +1,7 @@
 services:
   account-service:
-    build: .
+    #build: .
+    image: jacknotes/account-service:latest
     ports:
       - "8081:8081"
     volumes:
