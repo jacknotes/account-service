@@ -4,14 +4,33 @@ if (!isLoggedIn()) {
 }
 
 let currentPage = 1;
-const pageSize = 15;
+let recordsPageSize = 20;
 let deleteTargetId = null;
 let currentRecords = [];
 let currentSort = { field: 'date', dir: 'desc' }; // 默认按日期倒序
+let allFilteredRecords = [];
+let isAllRecordsSortMode = false;
 let currentSummaryData = null;
+let currentSummaryList = [];
+let currentSummaryPage = 1;
+let summaryPageSize = 20;
+let currentSummaryMode = null;
 let currentReportData = null;
+let currentReportDaily = [];
+let currentReportCategory = [];
+let currentReportDailyPage = 1;
+let currentReportCategoryPage = 1;
+let reportDailyPageSize = 20;
+let reportCategoryPageSize = 20;
 let currentUsers = [];
+let currentUsersPage = 1;
+let usersPageSize = 20;
 let currentLogs = [];
+let allLogs = [];
+let isAllLogsSortMode = false;
+let currentLogsTotal = 0;
+let currentLogsPage = 1;
+let logsPageSize = 20;
 // 各区域排序状态（用于正序 / 倒序切换）
 let summarySort = { field: null, dir: 'desc' };
 let summaryBreakdownSort = { field: null, dir: 'desc' };
@@ -23,6 +42,7 @@ let logsSort = { field: null, dir: 'desc' };
 // DOM
 const tableBody = document.getElementById('tableBody');
 const paginationEl = document.getElementById('pagination');
+const recordsPageSizeSelect = document.getElementById('recordsPageSize');
 const modal = document.getElementById('modal');
 const deleteModal = document.getElementById('deleteModal');
 const recordForm = document.getElementById('recordForm');
@@ -38,18 +58,37 @@ const thAmount = document.getElementById('thAmount');
 const thCategory = document.getElementById('thCategory');
 
 const btnThemeToggle = document.getElementById('btnThemeToggle');
+const btnAdd = document.getElementById('btnAdd');
 
 const startDate = document.getElementById('startDate');
 const endDate = document.getElementById('endDate');
 const keyword = document.getElementById('keyword');
+const usersPaginationEl = document.getElementById('usersPagination');
+const usersPageSizeSelect = document.getElementById('usersPageSize');
+const logsPageSizeSelect = document.getElementById('logsPageSize');
+const summaryPaginationWrap = document.getElementById('summaryPaginationWrap');
+const summaryPaginationEl = document.getElementById('summaryPagination');
+const summaryPageSizeSelect = document.getElementById('summaryPageSize');
+const reportDailyPaginationWrap = document.getElementById('reportDailyPaginationWrap');
+const reportDailyPaginationEl = document.getElementById('reportDailyPagination');
+const reportDailyPageSizeSelect = document.getElementById('reportDailyPageSize');
+const reportCategoryPaginationWrap = document.getElementById('reportCategoryPaginationWrap');
+const reportCategoryPaginationEl = document.getElementById('reportCategoryPagination');
+const reportCategoryPageSizeSelect = document.getElementById('reportCategoryPageSize');
 
 // 初始化今日日期
 formDate.value = new Date().toISOString().slice(0, 10);
+if (recordsPageSizeSelect) recordsPageSizeSelect.value = String(recordsPageSize);
+if (usersPageSizeSelect) usersPageSizeSelect.value = String(usersPageSize);
+if (logsPageSizeSelect) logsPageSizeSelect.value = String(logsPageSize);
+if (summaryPageSizeSelect) summaryPageSizeSelect.value = String(summaryPageSize);
+if (reportDailyPageSizeSelect) reportDailyPageSizeSelect.value = String(reportDailyPageSize);
+if (reportCategoryPageSizeSelect) reportCategoryPageSizeSelect.value = String(reportCategoryPageSize);
 
-async function fetchRecords(page = 1) {
+async function fetchRecords(page = 1, customPageSize = recordsPageSize) {
   const params = new URLSearchParams();
   params.set('page', page);
-  params.set('page_size', pageSize);
+  params.set('page_size', customPageSize);
   if (startDate.value) params.set('start_date', startDate.value);
   if (endDate.value) params.set('end_date', endDate.value);
   if (keyword.value.trim()) params.set('keyword', keyword.value.trim());
@@ -57,6 +96,21 @@ async function fetchRecords(page = 1) {
   const res = await fetchAuth(`${API}/records?${params}`);
   if (!res.ok) throw new Error('获取列表失败');
   return res.json();
+}
+
+async function fetchAllFilteredRecords() {
+  const firstPage = await fetchRecords(1, recordsPageSize);
+  const total = Number(firstPage.total || 0);
+  const totalPages = Math.max(1, Math.ceil(total / recordsPageSize));
+  const list = [...(firstPage.data || [])];
+
+  for (let p = 2; p <= totalPages; p += 1) {
+    const next = await fetchRecords(p, recordsPageSize);
+    list.push(...(next.data || []));
+  }
+
+  allFilteredRecords = list;
+  return allFilteredRecords;
 }
 
 function sortRecords(list) {
@@ -113,28 +167,53 @@ function renderTable(data) {
   });
 }
 
-function renderPagination(total, page) {
+function renderPager(el, total, page, pageSize, onPageChange) {
+  if (!el) return;
   const totalPages = Math.ceil(total / pageSize) || 1;
-  paginationEl.innerHTML = `
+  el.innerHTML = `
+    <button ${page <= 1 ? 'disabled' : ''} data-page="1">首页</button>
     <button ${page <= 1 ? 'disabled' : ''} data-page="${page - 1}">上一页</button>
     <span>第 ${page} / ${totalPages} 页，共 ${total} 条</span>
     <button ${page >= totalPages ? 'disabled' : ''} data-page="${page + 1}">下一页</button>
+    <button ${page >= totalPages ? 'disabled' : ''} data-page="${totalPages}">尾页</button>
+    <span class="pager-jump">
+      跳转
+      <input type="number" min="1" max="${totalPages}" value="${page}" aria-label="跳转页码" />
+      页
+      <button data-jump="1">确定</button>
+    </span>
   `;
-  paginationEl.querySelectorAll('button').forEach(btn => {
-    if (!btn.disabled) {
-      btn.addEventListener('click', () => loadPage(Number(btn.dataset.page)));
-    }
+  el.querySelectorAll('button[data-page]').forEach(btn => {
+    if (!btn.disabled) btn.addEventListener('click', () => onPageChange(Number(btn.dataset.page)));
   });
+  const jumpBtn = el.querySelector('button[data-jump="1"]');
+  const jumpInput = el.querySelector('.pager-jump input');
+  const doJump = () => {
+    if (!jumpInput) return;
+    const val = Number(jumpInput.value);
+    if (!Number.isFinite(val)) return;
+    const target = Math.min(Math.max(Math.trunc(val), 1), totalPages);
+    onPageChange(target);
+  };
+  jumpBtn && jumpBtn.addEventListener('click', doJump);
+  jumpInput && jumpInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doJump();
+  });
+}
+
+function renderPagination(total, page, pageSize, onPageChange = loadPage) {
+  renderPager(paginationEl, total, page, pageSize, onPageChange);
 }
 
 async function loadPage(page = 1) {
   tableBody.innerHTML = '<tr><td colspan="5" class="loading">加载中...</td></tr>';
   try {
+    isAllRecordsSortMode = false;
     const data = await fetchRecords(page);
     currentRecords = data.data || [];
     currentPage = page;
     renderTable(data);
-    renderPagination(data.total, data.page);
+    renderPagination(data.total, data.page, recordsPageSize);
   } catch (e) {
     tableBody.innerHTML = `<tr><td colspan="5" class="empty">加载失败: ${e.message}</td></tr>`;
   }
@@ -341,6 +420,49 @@ document.getElementById('btnReset').addEventListener('click', () => {
   keyword.value = '';
   loadPage(1);
 });
+if (recordsPageSizeSelect) {
+  recordsPageSizeSelect.addEventListener('change', () => {
+    recordsPageSize = Number(recordsPageSizeSelect.value) || 20;
+    isAllRecordsSortMode = false;
+    allFilteredRecords = [];
+    loadPage(1);
+  });
+}
+if (usersPageSizeSelect) {
+  usersPageSizeSelect.addEventListener('change', () => {
+    usersPageSize = Number(usersPageSizeSelect.value) || 20;
+    loadUsers(1);
+  });
+}
+if (logsPageSizeSelect) {
+  logsPageSizeSelect.addEventListener('change', () => {
+    logsPageSize = Number(logsPageSizeSelect.value) || 20;
+    isAllLogsSortMode = false;
+    allLogs = [];
+    loadLogs(1);
+  });
+}
+if (summaryPageSizeSelect) {
+  summaryPageSizeSelect.addEventListener('change', () => {
+    summaryPageSize = Number(summaryPageSizeSelect.value) || 20;
+    currentSummaryPage = 1;
+    renderSummaryDetail();
+  });
+}
+if (reportDailyPageSizeSelect) {
+  reportDailyPageSizeSelect.addEventListener('change', () => {
+    reportDailyPageSize = Number(reportDailyPageSizeSelect.value) || 20;
+    currentReportDailyPage = 1;
+    if (currentReportData) renderReport(currentReportData);
+  });
+}
+if (reportCategoryPageSizeSelect) {
+  reportCategoryPageSizeSelect.addEventListener('change', () => {
+    reportCategoryPageSize = Number(reportCategoryPageSizeSelect.value) || 20;
+    currentReportCategoryPage = 1;
+    if (currentReportData) renderReport(currentReportData);
+  });
+}
 
 document.getElementById('btnDeleteCancel').addEventListener('click', closeDeleteModal);
 document.getElementById('btnDeleteConfirm').addEventListener('click', doDelete);
@@ -352,19 +474,45 @@ document.getElementById('settingsModal').addEventListener('click', (e) => {
   if (e.target.id === 'settingsModal') e.target.classList.remove('show');
 });
 
-function changeSort(field) {
+function renderSortedPage(page = 1) {
+  const sorted = sortRecords(allFilteredRecords);
+  const total = sorted.length;
+  const totalPages = Math.max(1, Math.ceil(total / recordsPageSize));
+  const safePage = Math.min(Math.max(page, 1), totalPages);
+  const start = (safePage - 1) * recordsPageSize;
+  const pageList = sorted.slice(start, start + recordsPageSize);
+
+  currentPage = safePage;
+  currentRecords = pageList;
+  renderTable({ data: pageList });
+  renderPagination(total, safePage, recordsPageSize, renderSortedPage);
+}
+
+async function changeSort(field) {
   if (!field) return;
   if (currentSort.field === field) {
     currentSort.dir = currentSort.dir === 'desc' ? 'asc' : 'desc';
   } else {
     currentSort = { field, dir: 'desc' };
   }
-  renderTable({ data: currentRecords });
+
+  tableBody.innerHTML = '<tr><td colspan="5" class="loading">排序中...</td></tr>';
+  try {
+    if (!isAllRecordsSortMode || allFilteredRecords.length === 0) {
+      await fetchAllFilteredRecords();
+    }
+    isAllRecordsSortMode = true;
+    renderSortedPage(1);
+    refreshRecordsSortIndicators();
+  } catch (e) {
+    tableBody.innerHTML = `<tr><td colspan="5" class="empty">排序失败: ${e.message}</td></tr>`;
+  }
 }
 
 if (thDate) thDate.addEventListener('click', () => changeSort('date'));
 if (thAmount) thAmount.addEventListener('click', () => changeSort('amount'));
 if (thCategory) thCategory.addEventListener('click', () => changeSort('category'));
+refreshRecordsSortIndicators();
 
 // =====  Tab 切换 =====
 const sectionRecords = document.getElementById('sectionRecords');
@@ -398,6 +546,7 @@ function showTab(name) {
   sectionReport.style.display = name === 'report' ? 'block' : 'none';
   sectionUsers.style.display = name === 'users' ? 'block' : 'none';
   if (sectionLogs) sectionLogs.style.display = name === 'logs' ? 'block' : 'none';
+  if (btnAdd) btnAdd.style.display = name === 'records' ? '' : 'none';
   tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === name));
   if (name === 'users') loadUsers();
   if (name === 'logs') loadLogs();
@@ -412,36 +561,44 @@ let userModalMode = 'add';
 let editingUserId = null;
 let deleteUserId = null;
 
-async function loadUsers() {
+async function loadUsers(page = 1) {
   const tbody = document.getElementById('usersTableBody');
   try {
     const res = await fetchAuth(`${API}/auth/users`);
     if (!res.ok) throw new Error('无权限');
     const data = await res.json();
     if (!data.data || data.data.length === 0) {
+      currentUsers = [];
       tbody.innerHTML = '<tr><td colspan="5" class="empty">暂无用户</td></tr>';
+      renderPager(usersPaginationEl, 0, 1, usersPageSize, loadUsers);
       return;
     }
     currentUsers = data.data;
-    renderUsersTable();
+    renderUsersTable(undefined, page);
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="5" class="empty">${e.message}</td></tr>`;
   }
 }
 
-function renderUsersTable(sortField) {
+function renderUsersTable(sortField, page = currentUsersPage) {
   const tbody = document.getElementById('usersTableBody');
   if (!tbody) return;
-  let list = [...currentUsers];
   if (sortField === 'id') {
-    list = sortWithToggle(currentUsers, 'id', 'number', usersSort);
+    currentUsers = sortWithToggle(currentUsers, 'id', 'number', usersSort);
   } else if (sortField === 'username') {
-    list = sortWithToggle(currentUsers, 'username', 'string', usersSort);
+    currentUsers = sortWithToggle(currentUsers, 'username', 'string', usersSort);
   } else if (sortField === 'role') {
-    list = sortWithToggle(currentUsers, 'role', 'string', usersSort);
+    currentUsers = sortWithToggle(currentUsers, 'role', 'string', usersSort);
   } else if (sortField === 'created_at') {
-    list = sortWithToggle(currentUsers, 'created_at', 'string', usersSort);
+    currentUsers = sortWithToggle(currentUsers, 'created_at', 'string', usersSort);
   }
+  const total = currentUsers.length;
+  const totalPages = Math.max(1, Math.ceil(total / usersPageSize));
+  const safePage = Math.min(Math.max(page, 1), totalPages);
+  const start = (safePage - 1) * usersPageSize;
+  const list = currentUsers.slice(start, start + usersPageSize);
+  currentUsersPage = safePage;
+
   tbody.innerHTML = list.map(u => `
       <tr>
         <td>${u.id}</td>
@@ -457,15 +614,17 @@ function renderUsersTable(sortField) {
         </td>
       </tr>
     `).join('');
-    tbody.querySelectorAll('.btn-edit-user').forEach(btn => {
-      btn.addEventListener('click', () => openEditUser(Number(btn.dataset.id)));
-    });
-    tbody.querySelectorAll('.btn-chpwd-user').forEach(btn => {
-      btn.addEventListener('click', () => openChgPwdUser(Number(btn.dataset.id)));
-    });
-    tbody.querySelectorAll('.btn-del-user').forEach(btn => {
-      btn.addEventListener('click', () => openDeleteUser(Number(btn.dataset.id)));
-    });
+  renderPager(usersPaginationEl, total, safePage, usersPageSize, loadUsers);
+  refreshUsersSortIndicators();
+  tbody.querySelectorAll('.btn-edit-user').forEach(btn => {
+    btn.addEventListener('click', () => openEditUser(Number(btn.dataset.id)));
+  });
+  tbody.querySelectorAll('.btn-chpwd-user').forEach(btn => {
+    btn.addEventListener('click', () => openChgPwdUser(Number(btn.dataset.id)));
+  });
+  tbody.querySelectorAll('.btn-del-user').forEach(btn => {
+    btn.addEventListener('click', () => openDeleteUser(Number(btn.dataset.id)));
+  });
 }
 
 function openAddUser() {
@@ -604,55 +763,62 @@ usersThRole && usersThRole.addEventListener('click', () => renderUsersTable('rol
 usersThCreatedAt && usersThCreatedAt.addEventListener('click', () => renderUsersTable('created_at'));
 
 // ===== 操作日志（管理员） =====
-let logsPage = 1;
-const logsPageSize = 20;
+
+function renderLogsPagination(total, page, onPageChange = loadLogs) {
+  renderPager(document.getElementById('logsPagination'), total, page, logsPageSize, onPageChange);
+}
+
+async function fetchLogsPage(page = 1) {
+  const params = new URLSearchParams();
+  params.set('page', page);
+  params.set('page_size', logsPageSize);
+  const action = document.getElementById('logActionFilter')?.value;
+  if (action) params.set('action', action);
+  const res = await fetchAuth(`${API}/auth/operation-logs?${params}`);
+  if (!res.ok) throw new Error('无权限');
+  return res.json();
+}
+
+async function fetchAllLogs() {
+  const first = await fetchLogsPage(1);
+  const total = Number(first.total || 0);
+  const totalPages = Math.max(1, Math.ceil(total / logsPageSize));
+  const list = [...(first.data || [])];
+  for (let p = 2; p <= totalPages; p += 1) {
+    const next = await fetchLogsPage(p);
+    list.push(...(next.data || []));
+  }
+  allLogs = list;
+  currentLogsTotal = total;
+  return allLogs;
+}
+
 async function loadLogs(page = 1) {
   const tbody = document.getElementById('logsTableBody');
-  const paginationEl = document.getElementById('logsPagination');
   if (!tbody) return;
   tbody.innerHTML = '<tr><td colspan="5" class="loading">加载中...</td></tr>';
   try {
-    const params = new URLSearchParams();
-    params.set('page', page);
-    params.set('page_size', logsPageSize);
-    const action = document.getElementById('logActionFilter')?.value;
-    if (action) params.set('action', action);
-    const res = await fetchAuth(`${API}/auth/operation-logs?${params}`);
-    if (!res.ok) throw new Error('无权限');
-    const data = await res.json();
-    logsPage = page;
+    isAllLogsSortMode = false;
+    const data = await fetchLogsPage(page);
+    currentLogsPage = page;
+    currentLogsTotal = Number(data.total || 0);
     if (!data.data || data.data.length === 0) {
+      currentLogs = [];
       tbody.innerHTML = '<tr><td colspan="5" class="empty">暂无日志</td></tr>';
-      paginationEl.innerHTML = '';
+      renderLogsPagination(0, 1);
       return;
     }
     currentLogs = data.data;
-    renderLogsTable();
-    const totalPages = Math.ceil(data.total / logsPageSize) || 1;
-    paginationEl.innerHTML = `
-      <button ${page <= 1 ? 'disabled' : ''} data-page="${page - 1}">上一页</button>
-      <span>第 ${page} / ${totalPages} 页，共 ${data.total} 条</span>
-      <button ${page >= totalPages ? 'disabled' : ''} data-page="${page + 1}">下一页</button>
-    `;
-    paginationEl.querySelectorAll('button').forEach(btn => {
-      if (!btn.disabled) btn.addEventListener('click', () => loadLogs(Number(btn.dataset.page)));
-    });
+    renderLogsTable(currentLogs);
+    renderLogsPagination(currentLogsTotal, page);
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="5" class="empty">${e.message}</td></tr>`;
   }
 }
 
-function renderLogsTable(sortField) {
+function renderLogsTable(list = []) {
   const tbody = document.getElementById('logsTableBody');
   if (!tbody) return;
-  let list = [...currentLogs];
-  if (sortField === 'created_at') {
-    list = sortWithToggle(currentLogs, 'created_at', 'string', logsSort);
-  } else if (sortField === 'username') {
-    list = sortWithToggle(currentLogs, 'username', 'string', logsSort);
-  } else if (sortField === 'action') {
-    list = sortWithToggle(currentLogs, 'action', 'string', logsSort);
-  }
   tbody.innerHTML = list.map(l => `
       <tr>
         <td>${l.created_at ? l.created_at.slice(0, 19).replace('T', ' ') : '-'}</td>
@@ -662,16 +828,60 @@ function renderLogsTable(sortField) {
         <td>${l.ip || '-'}</td>
       </tr>
     `).join('');
+  refreshLogsSortIndicators();
 }
+
+function sortLogsList(list) {
+  if (!Array.isArray(list) || list.length === 0 || !logsSort.field) return [...(list || [])];
+  const cmp = logsSort.dir === 'desc' ? sortDesc : sortAsc;
+  return [...list].sort((a, b) => cmp(a, b, logsSort.field, 'string'));
+}
+
+function renderSortedLogsPage(page = 1) {
+  const sorted = sortLogsList(allLogs);
+  const total = sorted.length;
+  const totalPages = Math.max(1, Math.ceil(total / logsPageSize));
+  const safePage = Math.min(Math.max(page, 1), totalPages);
+  const start = (safePage - 1) * logsPageSize;
+  const pageList = sorted.slice(start, start + logsPageSize);
+  currentLogsPage = safePage;
+  currentLogs = pageList;
+  renderLogsTable(pageList);
+  renderLogsPagination(total, safePage, renderSortedLogsPage);
+}
+
+async function changeLogsSort(field) {
+  if (!field) return;
+  if (logsSort.field === field) {
+    logsSort.dir = logsSort.dir === 'desc' ? 'asc' : 'desc';
+  } else {
+    logsSort.field = field;
+    logsSort.dir = 'desc';
+  }
+  const tbody = document.getElementById('logsTableBody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="loading">排序中...</td></tr>';
+  try {
+    if (!isAllLogsSortMode || allLogs.length === 0) {
+      await fetchAllLogs();
+    }
+    isAllLogsSortMode = true;
+    const sorted = [...allLogs].sort((a, b) => (logsSort.dir === 'desc' ? sortDesc : sortAsc)(a, b, field, 'string'));
+    allLogs = sorted;
+    renderSortedLogsPage(1);
+  } catch (e) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="empty">${e.message}</td></tr>`;
+  }
+}
+
 document.getElementById('btnLoadLogs')?.addEventListener('click', () => loadLogs(1));
 
 // 日志表头排序
 const logsThTime = document.getElementById('logsThTime');
 const logsThUser = document.getElementById('logsThUser');
 const logsThAction = document.getElementById('logsThAction');
-logsThTime && logsThTime.addEventListener('click', () => renderLogsTable('created_at'));
-logsThUser && logsThUser.addEventListener('click', () => renderLogsTable('username'));
-logsThAction && logsThAction.addEventListener('click', () => renderLogsTable('action'));
+logsThTime && logsThTime.addEventListener('click', () => changeLogsSort('created_at'));
+logsThUser && logsThUser.addEventListener('click', () => changeLogsSort('username'));
+logsThAction && logsThAction.addEventListener('click', () => changeLogsSort('action'));
 
 // ===== 汇总 =====
 const summaryType = document.getElementById('summaryType');
@@ -721,7 +931,10 @@ async function loadSummary() {
     const data = await res.json();
     currentSummaryData = data;
     renderSummaryCards(data);
-    renderSummaryDetail(data);
+    currentSummaryMode = Array.isArray(data.records) && data.records.length > 0 ? 'records' : (Array.isArray(data.breakdown) && data.breakdown.length > 0 ? 'breakdown' : null);
+    currentSummaryList = currentSummaryMode === 'records' ? [...(data.records || [])] : [...(data.breakdown || [])];
+    currentSummaryPage = 1;
+    renderSummaryDetail();
   } catch (e) {
     summaryCards.innerHTML = `<div class="empty">加载失败: ${e.message}</div>`;
   }
@@ -748,8 +961,21 @@ function renderSummaryCards(data) {
   `;
 }
 
-function renderSummaryDetail(data) {
-  if (data.records && data.records.length > 0) {
+function renderSummaryDetail() {
+  if (!Array.isArray(currentSummaryList) || currentSummaryList.length === 0) {
+    summaryDetail.innerHTML = '<h3>明细</h3><div class="empty">暂无数据</div>';
+    if (summaryPaginationWrap) summaryPaginationWrap.style.display = 'none';
+    return;
+  }
+
+  const total = currentSummaryList.length;
+  const totalPages = Math.max(1, Math.ceil(total / summaryPageSize));
+  const safePage = Math.min(Math.max(currentSummaryPage, 1), totalPages);
+  const start = (safePage - 1) * summaryPageSize;
+  const list = currentSummaryList.slice(start, start + summaryPageSize);
+  currentSummaryPage = safePage;
+
+  if (currentSummaryMode === 'records') {
     summaryDetail.innerHTML = `
       <h3>明细</h3>
       <table class="table">
@@ -762,7 +988,7 @@ function renderSummaryDetail(data) {
           </tr>
         </thead>
         <tbody>
-          ${data.records.map(r => `
+          ${list.map(r => `
             <tr>
               <td>${r.date}</td>
               <td class="${r.amount >= 0 ? 'amount-income' : 'amount-expense'}">
@@ -775,7 +1001,7 @@ function renderSummaryDetail(data) {
         </tbody>
       </table>
     `;
-  } else if (data.breakdown && data.breakdown.length > 0) {
+  } else {
     summaryDetail.innerHTML = `
       <h3>分项</h3>
       <table class="table">
@@ -789,7 +1015,7 @@ function renderSummaryDetail(data) {
           </tr>
         </thead>
         <tbody>
-          ${data.breakdown.map(b => `
+          ${list.map(b => `
             <tr>
               <td>${b.period}</td>
               <td class="amount-income">+${b.income.toFixed(2)}</td>
@@ -801,9 +1027,14 @@ function renderSummaryDetail(data) {
         </tbody>
       </table>
     `;
-  } else {
-    summaryDetail.innerHTML = '<h3>明细</h3><div class="empty">暂无数据</div>';
   }
+
+  if (summaryPaginationWrap) summaryPaginationWrap.style.display = 'flex';
+  renderPager(summaryPaginationEl, total, safePage, summaryPageSize, (page) => {
+    currentSummaryPage = page;
+    renderSummaryDetail();
+  });
+  refreshSummarySortIndicators();
   attachSummarySortHandlers();
 }
 
@@ -841,49 +1072,131 @@ function sortWithToggle(list, key, type, state) {
   return [...list].sort((a, b) => cmp(a, b, key, type));
 }
 
+function getSortArrow(state, field) {
+  if (!state || state.field !== field) return '';
+  return state.dir === 'asc' ? ' ↑' : ' ↓';
+}
+
+function setHeaderSortIndicators(headers, state) {
+  headers.forEach(h => {
+    const el = document.getElementById(h.id);
+    if (!el) return;
+    el.textContent = `${h.label}${getSortArrow(state, h.field)}`;
+  });
+}
+
+function refreshRecordsSortIndicators() {
+  setHeaderSortIndicators([
+    { id: 'thDate', label: '日期', field: 'date' },
+    { id: 'thAmount', label: '金额', field: 'amount' },
+    { id: 'thCategory', label: '分类', field: 'category' },
+  ], currentSort);
+}
+
+function refreshUsersSortIndicators() {
+  setHeaderSortIndicators([
+    { id: 'usersThId', label: 'ID', field: 'id' },
+    { id: 'usersThUsername', label: '用户名', field: 'username' },
+    { id: 'usersThRole', label: '角色', field: 'role' },
+    { id: 'usersThCreatedAt', label: '创建时间', field: 'created_at' },
+  ], usersSort);
+}
+
+function refreshLogsSortIndicators() {
+  setHeaderSortIndicators([
+    { id: 'logsThTime', label: '时间', field: 'created_at' },
+    { id: 'logsThUser', label: '用户', field: 'username' },
+    { id: 'logsThAction', label: '操作', field: 'action' },
+  ], logsSort);
+}
+
+function refreshSummarySortIndicators() {
+  if (currentSummaryMode === 'records') {
+    setHeaderSortIndicators([
+      { id: 'summaryThDate', label: '日期', field: 'date' },
+      { id: 'summaryThAmount', label: '金额', field: 'amount' },
+      { id: 'summaryThCategory', label: '分类', field: 'category' },
+    ], summarySort);
+  } else if (currentSummaryMode === 'breakdown') {
+    setHeaderSortIndicators([
+      { id: 'summaryThPeriod', label: '日期/月份', field: 'period' },
+      { id: 'summaryThIncome', label: '收入', field: 'income' },
+      { id: 'summaryThExpense', label: '支出', field: 'expense' },
+      { id: 'summaryThBalance', label: '结余', field: 'balance' },
+      { id: 'summaryThCount', label: '笔数', field: 'count' },
+    ], summaryBreakdownSort);
+  }
+}
+
+function refreshReportSortIndicators() {
+  setHeaderSortIndicators([
+    { id: 'reportThPeriod', label: '日期', field: 'period' },
+    { id: 'reportThIncome', label: '收入', field: 'income' },
+    { id: 'reportThExpense', label: '支出', field: 'expense' },
+    { id: 'reportThBalance', label: '结余', field: 'balance' },
+    { id: 'reportThCount', label: '笔数', field: 'count' },
+  ], reportDailySort);
+
+  setHeaderSortIndicators([
+    { id: 'reportThCat', label: '分类', field: 'category' },
+    { id: 'reportThCatIncome', label: '收入', field: 'income' },
+    { id: 'reportThCatExpense', label: '支出', field: 'expense' },
+    { id: 'reportThCatTotal', label: '合计', field: 'total' },
+    { id: 'reportThCatCount', label: '笔数', field: 'count' },
+  ], reportCatSort);
+}
+
 function attachSummarySortHandlers() {
-  if (!currentSummaryData) return;
-  if (currentSummaryData.records && currentSummaryData.records.length > 0) {
+  if (!currentSummaryMode || !Array.isArray(currentSummaryList) || currentSummaryList.length === 0) return;
+  if (currentSummaryMode === 'records') {
     const thDate = document.getElementById('summaryThDate');
     const thAmount = document.getElementById('summaryThAmount');
     const thCategory = document.getElementById('summaryThCategory');
     thDate && (thDate.onclick = () => {
-      const list = sortWithToggle(currentSummaryData.records, 'date', 'string', summarySort);
-      renderSummaryDetail({ records: list });
+      currentSummaryList = sortWithToggle(currentSummaryList, 'date', 'string', summarySort);
+      currentSummaryPage = 1;
+      renderSummaryDetail();
     });
     thAmount && (thAmount.onclick = () => {
-      const list = sortWithToggle(currentSummaryData.records, 'amount', 'number', summarySort);
-      renderSummaryDetail({ records: list });
+      currentSummaryList = sortWithToggle(currentSummaryList, 'amount', 'number', summarySort);
+      currentSummaryPage = 1;
+      renderSummaryDetail();
     });
     thCategory && (thCategory.onclick = () => {
-      const list = sortWithToggle(currentSummaryData.records, 'category', 'string', summarySort);
-      renderSummaryDetail({ records: list });
+      currentSummaryList = sortWithToggle(currentSummaryList, 'category', 'string', summarySort);
+      currentSummaryPage = 1;
+      renderSummaryDetail();
     });
-  } else if (currentSummaryData.breakdown && currentSummaryData.breakdown.length > 0) {
+  } else {
     const thPeriod = document.getElementById('summaryThPeriod');
     const thIncome = document.getElementById('summaryThIncome');
     const thExpense = document.getElementById('summaryThExpense');
     const thBalance = document.getElementById('summaryThBalance');
     const thCount = document.getElementById('summaryThCount');
     thPeriod && (thPeriod.onclick = () => {
-      const list = sortWithToggle(currentSummaryData.breakdown, 'period', 'string', summaryBreakdownSort);
-      renderSummaryDetail({ breakdown: list });
+      currentSummaryList = sortWithToggle(currentSummaryList, 'period', 'string', summaryBreakdownSort);
+      currentSummaryPage = 1;
+      renderSummaryDetail();
     });
     thIncome && (thIncome.onclick = () => {
-      const list = sortWithToggle(currentSummaryData.breakdown, 'income', 'number', summaryBreakdownSort);
-      renderSummaryDetail({ breakdown: list });
+      currentSummaryList = sortWithToggle(currentSummaryList, 'income', 'number', summaryBreakdownSort);
+      currentSummaryPage = 1;
+      renderSummaryDetail();
     });
     thExpense && (thExpense.onclick = () => {
-      const list = sortWithToggle(currentSummaryData.breakdown, 'expense', 'number', summaryBreakdownSort);
-      renderSummaryDetail({ breakdown: list });
+      currentSummaryList = sortWithToggle(currentSummaryList, 'expense', 'number', summaryBreakdownSort);
+      currentSummaryPage = 1;
+      renderSummaryDetail();
     });
     thBalance && (thBalance.onclick = () => {
-      const list = sortWithToggle(currentSummaryData.breakdown, 'balance', 'number', summaryBreakdownSort);
-      renderSummaryDetail({ breakdown: list });
+      currentSummaryList = sortWithToggle(currentSummaryList, 'balance', 'number', summaryBreakdownSort);
+      currentSummaryPage = 1;
+      renderSummaryDetail();
     });
     thCount && (thCount.onclick = () => {
-      const list = sortWithToggle(currentSummaryData.breakdown, 'count', 'number', summaryBreakdownSort);
-      renderSummaryDetail({ breakdown: list });
+      currentSummaryList = sortWithToggle(currentSummaryList, 'count', 'number', summaryBreakdownSort);
+      currentSummaryPage = 1;
+      renderSummaryDetail();
     });
   }
 }
@@ -913,6 +1226,10 @@ async function loadReport() {
     if (!res.ok) throw new Error('生成失败');
     const data = await res.json();
     currentReportData = data;
+    currentReportDaily = [...(data.daily || [])];
+    currentReportCategory = [...(data.by_category || [])];
+    currentReportDailyPage = 1;
+    currentReportCategoryPage = 1;
     renderReport(data);
   } catch (e) {
     reportContent.innerHTML = `<div class="empty">${e.message}</div>`;
@@ -920,6 +1237,18 @@ async function loadReport() {
 }
 
 function renderReport(data) {
+  const dailyTotal = currentReportDaily.length;
+  const dailyPages = Math.max(1, Math.ceil(dailyTotal / reportDailyPageSize));
+  currentReportDailyPage = Math.min(Math.max(currentReportDailyPage, 1), dailyPages);
+  const dailyStart = (currentReportDailyPage - 1) * reportDailyPageSize;
+  const dailyList = currentReportDaily.slice(dailyStart, dailyStart + reportDailyPageSize);
+
+  const catTotal = currentReportCategory.length;
+  const catPages = Math.max(1, Math.ceil(catTotal / reportCategoryPageSize));
+  currentReportCategoryPage = Math.min(Math.max(currentReportCategoryPage, 1), catPages);
+  const catStart = (currentReportCategoryPage - 1) * reportCategoryPageSize;
+  const catList = currentReportCategory.slice(catStart, catStart + reportCategoryPageSize);
+
   let html = `
     <div class="report-overview">
       <div class="stat"><div class="label">收入</div><div class="value amount-income">+${data.income.toFixed(2)}</div></div>
@@ -928,7 +1257,7 @@ function renderReport(data) {
       <div class="stat"><div class="label">笔数</div><div class="value">${data.count}</div></div>
     </div>
   `;
-  if (data.daily && data.daily.length > 0) {
+  if (dailyTotal > 0) {
     html += `
       <h3>按日统计</h3>
       <table class="table">
@@ -942,7 +1271,7 @@ function renderReport(data) {
           </tr>
         </thead>
         <tbody>
-          ${data.daily.map(d => `
+          ${dailyList.map(d => `
             <tr>
               <td>${d.period}</td>
               <td class="amount-income">+${d.income.toFixed(2)}</td>
@@ -955,7 +1284,7 @@ function renderReport(data) {
       </table>
     `;
   }
-  if (data.by_category && data.by_category.length > 0) {
+  if (catTotal > 0) {
     html += `
       <h3>按分类统计</h3>
       <table class="table">
@@ -969,7 +1298,7 @@ function renderReport(data) {
           </tr>
         </thead>
         <tbody>
-          ${data.by_category.map(c => `
+          ${catList.map(c => `
             <tr>
               <td>${c.category}</td>
               <td class="amount-income">+${c.income.toFixed(2)}</td>
@@ -985,63 +1314,99 @@ function renderReport(data) {
     `;
   }
   reportContent.innerHTML = html;
+
+  const showDailyPager = dailyTotal > reportDailyPageSize;
+  const showCategoryPager = catTotal > reportCategoryPageSize;
+
+  if (reportDailyPaginationWrap) reportDailyPaginationWrap.style.display = showDailyPager ? 'flex' : 'none';
+  if (reportCategoryPaginationWrap) reportCategoryPaginationWrap.style.display = showCategoryPager ? 'flex' : 'none';
+
+  if (showDailyPager) {
+    renderPager(reportDailyPaginationEl, dailyTotal, currentReportDailyPage, reportDailyPageSize, (page) => {
+      currentReportDailyPage = page;
+      renderReport(currentReportData);
+    });
+  } else if (reportDailyPaginationEl) {
+    reportDailyPaginationEl.innerHTML = '';
+  }
+
+  if (showCategoryPager) {
+    renderPager(reportCategoryPaginationEl, catTotal, currentReportCategoryPage, reportCategoryPageSize, (page) => {
+      currentReportCategoryPage = page;
+      renderReport(currentReportData);
+    });
+  } else if (reportCategoryPaginationEl) {
+    reportCategoryPaginationEl.innerHTML = '';
+  }
+
+  refreshReportSortIndicators();
   attachReportSortHandlers();
 }
 
 function attachReportSortHandlers() {
   if (!currentReportData) return;
-  if (currentReportData.daily && currentReportData.daily.length > 0) {
+  if (currentReportDaily && currentReportDaily.length > 0) {
     const thP = document.getElementById('reportThPeriod');
     const thI = document.getElementById('reportThIncome');
     const thE = document.getElementById('reportThExpense');
     const thB = document.getElementById('reportThBalance');
     const thC = document.getElementById('reportThCount');
     thP && (thP.onclick = () => {
-      const list = sortWithToggle(currentReportData.daily, 'period', 'string', reportDailySort);
-      renderReport({ ...currentReportData, daily: list });
+      currentReportDaily = sortWithToggle(currentReportDaily, 'period', 'string', reportDailySort);
+      currentReportDailyPage = 1;
+      renderReport(currentReportData);
     });
     thI && (thI.onclick = () => {
-      const list = sortWithToggle(currentReportData.daily, 'income', 'number', reportDailySort);
-      renderReport({ ...currentReportData, daily: list });
+      currentReportDaily = sortWithToggle(currentReportDaily, 'income', 'number', reportDailySort);
+      currentReportDailyPage = 1;
+      renderReport(currentReportData);
     });
     thE && (thE.onclick = () => {
-      const list = sortWithToggle(currentReportData.daily, 'expense', 'number', reportDailySort);
-      renderReport({ ...currentReportData, daily: list });
+      currentReportDaily = sortWithToggle(currentReportDaily, 'expense', 'number', reportDailySort);
+      currentReportDailyPage = 1;
+      renderReport(currentReportData);
     });
     thB && (thB.onclick = () => {
-      const list = sortWithToggle(currentReportData.daily, 'balance', 'number', reportDailySort);
-      renderReport({ ...currentReportData, daily: list });
+      currentReportDaily = sortWithToggle(currentReportDaily, 'balance', 'number', reportDailySort);
+      currentReportDailyPage = 1;
+      renderReport(currentReportData);
     });
     thC && (thC.onclick = () => {
-      const list = sortWithToggle(currentReportData.daily, 'count', 'number', reportDailySort);
-      renderReport({ ...currentReportData, daily: list });
+      currentReportDaily = sortWithToggle(currentReportDaily, 'count', 'number', reportDailySort);
+      currentReportDailyPage = 1;
+      renderReport(currentReportData);
     });
   }
-  if (currentReportData.by_category && currentReportData.by_category.length > 0) {
+  if (currentReportCategory && currentReportCategory.length > 0) {
     const thCat = document.getElementById('reportThCat');
     const thI2 = document.getElementById('reportThCatIncome');
     const thE2 = document.getElementById('reportThCatExpense');
     const thT2 = document.getElementById('reportThCatTotal');
     const thC2 = document.getElementById('reportThCatCount');
     thCat && (thCat.onclick = () => {
-      const list = sortWithToggle(currentReportData.by_category, 'category', 'string', reportCatSort);
-      renderReport({ ...currentReportData, by_category: list });
+      currentReportCategory = sortWithToggle(currentReportCategory, 'category', 'string', reportCatSort);
+      currentReportCategoryPage = 1;
+      renderReport(currentReportData);
     });
     thI2 && (thI2.onclick = () => {
-      const list = sortWithToggle(currentReportData.by_category, 'income', 'number', reportCatSort);
-      renderReport({ ...currentReportData, by_category: list });
+      currentReportCategory = sortWithToggle(currentReportCategory, 'income', 'number', reportCatSort);
+      currentReportCategoryPage = 1;
+      renderReport(currentReportData);
     });
     thE2 && (thE2.onclick = () => {
-      const list = sortWithToggle(currentReportData.by_category, 'expense', 'number', reportCatSort);
-      renderReport({ ...currentReportData, by_category: list });
+      currentReportCategory = sortWithToggle(currentReportCategory, 'expense', 'number', reportCatSort);
+      currentReportCategoryPage = 1;
+      renderReport(currentReportData);
     });
     thT2 && (thT2.onclick = () => {
-      const list = sortWithToggle(currentReportData.by_category, 'total', 'number', reportCatSort);
-      renderReport({ ...currentReportData, by_category: list });
+      currentReportCategory = sortWithToggle(currentReportCategory, 'total', 'number', reportCatSort);
+      currentReportCategoryPage = 1;
+      renderReport(currentReportData);
     });
     thC2 && (thC2.onclick = () => {
-      const list = sortWithToggle(currentReportData.by_category, 'count', 'number', reportCatSort);
-      renderReport({ ...currentReportData, by_category: list });
+      currentReportCategory = sortWithToggle(currentReportCategory, 'count', 'number', reportCatSort);
+      currentReportCategoryPage = 1;
+      renderReport(currentReportData);
     });
   }
 }

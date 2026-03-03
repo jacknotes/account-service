@@ -22,7 +22,6 @@
         <span class="current-user" id="currentUserName"></span>
         <button class="btn btn-outline btn-sm" id="btnSettings">账户设置</button>
         <button class="btn btn-outline btn-sm" id="btnLogout">退出</button>
-        <button class="btn btn-primary" id="btnAdd">+ 添加记录</button>
       </div>
     </header>
 
@@ -37,6 +36,7 @@
         <input type="text" id="keyword" placeholder="关键字搜索（描述/分类）" />
         <button class="btn" id="btnSearch">查询</button>
         <button class="btn btn-outline" id="btnReset">重置</button>
+        <button class="btn btn-primary" id="btnAdd">+ 添加记录</button>
       </div>
     </div>
 
@@ -53,7 +53,19 @@
         </thead>
         <tbody id="tableBody"></tbody>
       </table>
-      <div class="pagination" id="pagination"></div>
+      <div class="pagination-wrap">
+        <div class="page-size-control">
+          <label>每页</label>
+          <select id="recordsPageSize">
+            
+            <option value="20" selected>20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+          <span>条</span>
+        </div>
+        <div class="pagination" id="pagination"></div>
+      </div>
     </main>
     </section>
 
@@ -86,6 +98,18 @@
       </div>
       <div class="summary-cards" id="summaryCards"></div>
       <div class="summary-detail" id="summaryDetail"></div>
+      <div class="pagination-wrap" id="summaryPaginationWrap" style="display:none">
+        <div class="page-size-control">
+          <label>每页</label>
+          <select id="summaryPageSize">
+            <option value="20" selected>20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+          <span>条</span>
+        </div>
+        <div class="pagination" id="summaryPagination"></div>
+      </div>
     </section>
 
     <!-- 报表页 -->
@@ -100,6 +124,31 @@
         </div>
       </div>
       <div class="report-content" id="reportContent"></div>
+      <div class="pagination-wrap" id="reportDailyPaginationWrap" style="display:none">
+        <div class="page-size-control">
+          <label>按日每页</label>
+          <select id="reportDailyPageSize">
+            
+            <option value="20" selected>20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+          <span>条</span>
+        </div>
+        <div class="pagination" id="reportDailyPagination"></div>
+      </div>
+      <div class="pagination-wrap" id="reportCategoryPaginationWrap" style="display:none">
+        <div class="page-size-control">
+          <label>分类每页</label>
+          <select id="reportCategoryPageSize">
+            <option value="20" selected>20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+          <span>条</span>
+        </div>
+        <div class="pagination" id="reportCategoryPagination"></div>
+      </div>
     </section>
 
     <!-- 用户管理页（管理员） -->
@@ -120,6 +169,18 @@
           </thead>
           <tbody id="usersTableBody"></tbody>
         </table>
+      </div>
+      <div class="pagination-wrap">
+        <div class="page-size-control">
+          <label>每页</label>
+          <select id="usersPageSize">
+            <option value="20" selected>20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+          <span>条</span>
+        </div>
+        <div class="pagination" id="usersPagination"></div>
       </div>
     </section>
 
@@ -157,7 +218,18 @@
           </thead>
           <tbody id="logsTableBody"></tbody>
         </table>
-        <div class="pagination" id="logsPagination"></div>
+        <div class="pagination-wrap">
+          <div class="page-size-control">
+            <label>每页</label>
+            <select id="logsPageSize">
+              <option value="20" selected>20</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+            <span>条</span>
+          </div>
+          <div class="pagination" id="logsPagination"></div>
+        </div>
       </div>
     </section>
 
