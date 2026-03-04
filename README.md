@@ -19,7 +19,7 @@
 - ✅ **每日汇总**：按日查看收入、支出、结余及明细
 - ✅ **每月汇总**：按月查看并支持按日分项
 - ✅ **每年汇总**：按年查看并支持按月分项
-- ✅ **报表**：自定义日期范围，按日统计、按分类统计
+- ✅ **报表**：自定义日期范围，按日统计、按分类统计、报表导出为PDF和图片
 
 ## 快速开始
 
@@ -35,11 +35,11 @@ go mod tidy
 go run main.go
 ```
 
-默认监听 `http://localhost:8080`，打开浏览器访问即可。
+默认监听 `http://localhost:8081`，打开浏览器访问即可。
 
 ### 3. 首次使用
 
-访问 http://localhost:8080/app/ 会跳转到登录页。**首次使用且无用户时**，可点击「注册」创建账号；首个注册用户自动成为**管理员**，之后注册将关闭。管理员可在「用户管理」中增删改查用户、修改用户密码。
+访问 http://localhost:8081/app/ 会跳转到登录页。**首次使用且无用户时**，可点击「注册」创建账号；首个注册用户自动成为**管理员**，之后注册将关闭。管理员可在「用户管理」中增删改查用户、修改用户密码。
 
 ### 4. Docker 部署
 
@@ -55,7 +55,23 @@ docker run -d -p 8081:8081 \
   account-service
 
 # 或使用 docker-compose
-docker-compose up -d
+$ cat docker-compose.yml
+version: '2'
+services:
+  account-service:
+    #build: .
+    image: jacknotes/account-service:latest
+    ports:
+      - "8081:8081"
+    volumes:
+      - /data/account-service/data:/app/data
+    environment:
+      - PORT=8081
+      - DATABASE_PATH=/app/data/accounting.db
+      - JWT_SECRET=pOdwpiIU0BWds4Sd6WqYu3at9fdUlApM
+    restart: unless-stopped
+
+$ docker-compose up -d
 ```
 
 访问 http://localhost:8081/app/
@@ -64,7 +80,7 @@ docker-compose up -d
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| PORT | 服务端口 | 8080 |
+| PORT | 服务端口 | 8081 |
 | DATABASE_PATH | 数据库文件路径 | ./data/accounting.db |
 | FRONTEND_DIR | 前端静态文件目录 | ./frontend |
 | JWT_SECRET | JWT 签名密钥 | 默认值（生产环境务必修改） |
