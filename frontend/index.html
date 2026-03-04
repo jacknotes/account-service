@@ -6,7 +6,7 @@
   <title>记账本</title>
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
+<body class="app-initializing">
   <div class="app">
     <header class="header">
       <h1>📒 记账本</h1>
@@ -121,6 +121,8 @@
           <label>结束日期</label>
           <span class="date-field"><span class="date-display" data-for="reportEndDate"></span><input type="date" id="reportEndDate" aria-label="结束日期" /></span>
           <button class="btn" id="btnReport">生成报表</button>
+          <button class="btn btn-outline" id="btnExportReportPDF">导出PDF</button>
+          <button class="btn btn-outline" id="btnExportReportImage">导出图片</button>
         </div>
       </div>
       <div class="report-content" id="reportContent"></div>
@@ -385,7 +387,17 @@
       </div>
     </div>
   </div>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="auth.js"></script>
+  <script>
+    (function () {
+      var token = localStorage.getItem('account_token');
+      if (!token) {
+        window.location.replace('/app/login.html');
+      }
+    })();
+  </script>
   <script src="app.js"></script>
 </body>
 </html>

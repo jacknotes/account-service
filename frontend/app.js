@@ -3,6 +3,10 @@ if (!isLoggedIn()) {
   window.location.href = '/app/login.html';
 }
 
+function markAppReady() {
+  document.body.classList.remove('app-initializing');
+}
+
 let currentPage = 1;
 let recordsPageSize = 20;
 let deleteTargetId = null;
@@ -1207,6 +1211,8 @@ document.getElementById('btnSummary').addEventListener('click', loadSummary);
 const reportStartDate = document.getElementById('reportStartDate');
 const reportEndDate = document.getElementById('reportEndDate');
 const reportContent = document.getElementById('reportContent');
+const btnExportReportPDF = document.getElementById('btnExportReportPDF');
+const btnExportReportImage = document.getElementById('btnExportReportImage');
 
 function setDefaultReportRange() {
   const now = new Date();
@@ -1411,7 +1417,75 @@ function attachReportSortHandlers() {
   }
 }
 
+async function exportReportAsImage() {
+  if (!currentReportData || !reportContent || typeof html2canvas === 'undefined') {
+    alert('请先生成报表后再导出图片');
+    return;
+  }
+  try {
+    const canvas = await html2canvas(reportContent, {
+      backgroundColor: '#0f0f12',
+      scale: 2,
+      useCORS: true,
+    });
+    const dataUrl = canvas.toDataURL('image/png');
+    const a = document.createElement('a');
+    const start = reportStartDate?.value || '';
+    const end = reportEndDate?.value || '';
+    a.href = dataUrl;
+    a.download = `报表_${start}_${end}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } catch (e) {
+    alert('导出图片失败: ' + e.message);
+  }
+}
+
+async function exportReportAsPDF() {
+  if (!currentReportData || !reportContent || typeof html2canvas === 'undefined' || !window.jspdf?.jsPDF) {
+    alert('请先生成报表后再导出PDF');
+    return;
+  }
+  try {
+    const canvas = await html2canvas(reportContent, {
+      backgroundColor: '#0f0f12',
+      scale: 2,
+      useCORS: true,
+    });
+    const imgData = canvas.toDataURL('image/png');
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF('p', 'mm', 'a4');
+
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const imgWidth = pageWidth;
+    const imgHeight = canvas.height * imgWidth / canvas.width;
+
+    let heightLeft = imgHeight;
+    let position = 0;
+
+    pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+    heightLeft -= pageHeight;
+
+    while (heightLeft > 0) {
+      position = heightLeft - imgHeight;
+      pdf.addPage();
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+    }
+
+    const start = reportStartDate?.value || '';
+    const end = reportEndDate?.value || '';
+    pdf.save(`报表_${start}_${end}.pdf`);
+  } catch (e) {
+    alert('导出PDF失败: ' + e.message);
+  }
+}
+
 document.getElementById('btnReport').addEventListener('click', loadReport);
+btnExportReportPDF && btnExportReportPDF.addEventListener('click', exportReportAsPDF);
+btnExportReportImage && btnExportReportImage.addEventListener('click', exportReportAsImage);
 
 // 日期输入显示 yyyy/mm/dd
 function syncDateDisplay(inputId) {
@@ -1475,4 +1549,6 @@ if (btnThemeToggle) {
 
 // 初始加载
 initTheme();
-initUserRole().then(() => loadPage());
+initUserRole()
+  .then(() => loadPage())
+  .finally(() => markAppReady());

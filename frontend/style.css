@@ -38,6 +38,10 @@ body {
   line-height: 1.5;
 }
 
+body.app-initializing .app {
+  visibility: hidden;
+}
+
 .app {
   max-width: 960px;
   margin: 0 auto;

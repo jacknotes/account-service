@@ -4,6 +4,7 @@ data/
 
 # 可执行文件
 *.exe
+*.TTF
 account-service
 
 # 环境变量与密钥（勿提交真实配置）

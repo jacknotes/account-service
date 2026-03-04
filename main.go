@@ -77,7 +77,7 @@ func main() {
 
 	// 前端静态文件（放 /app 下避免与 /api 路由冲突）
 	r.Static("/app", cfg.Frontend)
-	r.GET("/", func(c *gin.Context) { c.Redirect(302, "/app/") })
+	r.GET("/", func(c *gin.Context) { c.Redirect(302, "/app/login.html") })
 
 	log.Printf("服务启动: http://localhost:%s", cfg.Port)
 	log.Fatal(r.Run(":" + cfg.Port))
