@@ -1,22 +1,31 @@
 package database
 
 import (
+	"context"
 	"account-service/internal/models"
 	"database/sql"
 	"fmt"
 )
 
+func userIDClause(userID int64) (string, []interface{}) {
+	if userID > 0 {
+		return " AND (user_id = ? OR user_id IS NULL)", []interface{}{userID}
+	}
+	return "", nil
+}
+
 // DailySummary 某日汇总
-func (db *DB) DailySummary(date string) (*models.Summary, error) {
+func (db *DB) DailySummary(ctx context.Context, date string, userID int64) (*models.Summary, error) {
 	var income, expense sql.NullFloat64
 	var cnt int
-	err := db.conn.QueryRow(`
+	uidClause, uidArgs := userIDClause(userID)
+	args := append([]interface{}{date}, uidArgs...)
+	err := db.conn.QueryRowContext(ctx, `
 		SELECT 
 			COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0),
 			COALESCE(ABS(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END)), 0),
 			COUNT(*)
-		FROM records WHERE date = ?
-	`, date).Scan(&income, &expense, &cnt)
+		FROM records WHERE date = ?`+uidClause, args...).Scan(&income, &expense, &cnt)
 	if err != nil {
 		return nil, err
 	}
@@ -27,10 +36,11 @@ func (db *DB) DailySummary(date string) (*models.Summary, error) {
 		Count:   cnt,
 	}
 	// 明细
-	rows, err := db.conn.Query(
-		`SELECT id, date, amount, category, description, created_at, updated_at 
-		 FROM records WHERE date = ? ORDER BY id`,
-		date,
+	detailArgs := append([]interface{}{date}, uidArgs...)
+	rows, err := db.conn.QueryContext(ctx,
+		`SELECT id, user_id, date, amount, category, description, created_at, updated_at 
+		 FROM records WHERE date = ?`+uidClause+` ORDER BY id`,
+		detailArgs...,
 	)
 	if err != nil {
 		return s, nil
@@ -38,7 +48,7 @@ func (db *DB) DailySummary(date string) (*models.Summary, error) {
 	defer rows.Close()
 	for rows.Next() {
 		var r models.Record
-		if err := rows.Scan(&r.ID, &r.Date, &r.Amount, &r.Category, &r.Description, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Date, &r.Amount, &r.Category, &r.Description, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			break
 		}
 		s.Records = append(s.Records, &r)
@@ -47,19 +57,20 @@ func (db *DB) DailySummary(date string) (*models.Summary, error) {
 }
 
 // MonthlySummary 某月汇总
-func (db *DB) MonthlySummary(year, month int) (*models.Summary, error) {
+func (db *DB) MonthlySummary(ctx context.Context, year, month int, userID int64) (*models.Summary, error) {
 	start := fmtDate(year, month, 1)
 	end := fmtDate(year, month, daysInMonth(year, month))
 
 	var income, expense sql.NullFloat64
 	var cnt int
-	err := db.conn.QueryRow(`
+	uidClause, uidArgs := userIDClause(userID)
+	args := append([]interface{}{start, end}, uidArgs...)
+	err := db.conn.QueryRowContext(ctx, `
 		SELECT 
 			COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0),
 			COALESCE(ABS(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END)), 0),
 			COUNT(*)
-		FROM records WHERE date >= ? AND date <= ?
-	`, start, end).Scan(&income, &expense, &cnt)
+		FROM records WHERE date >= ? AND date <= ?`+uidClause, args...).Scan(&income, &expense, &cnt)
 	if err != nil {
 		return nil, err
 	}
@@ -70,14 +81,15 @@ func (db *DB) MonthlySummary(year, month int) (*models.Summary, error) {
 		Count:   cnt,
 	}
 	// 按日分项
-	rows, err := db.conn.Query(`
+	bkArgs := append([]interface{}{start, end}, uidArgs...)
+	rows, err := db.conn.QueryContext(ctx, `
 		SELECT date,
 			COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0),
 			COALESCE(ABS(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END)), 0),
 			COUNT(*)
-		FROM records WHERE date >= ? AND date <= ?
+		FROM records WHERE date >= ? AND date <= ?`+uidClause+`
 		GROUP BY date ORDER BY date
-	`, start, end)
+	`, bkArgs...)
 	if err != nil {
 		return s, nil
 	}
@@ -97,19 +109,20 @@ func (db *DB) MonthlySummary(year, month int) (*models.Summary, error) {
 }
 
 // YearlySummary 某年汇总
-func (db *DB) YearlySummary(year int) (*models.Summary, error) {
+func (db *DB) YearlySummary(ctx context.Context, year int, userID int64) (*models.Summary, error) {
 	start := fmtDate(year, 1, 1)
 	end := fmtDate(year, 12, 31)
 
 	var income, expense sql.NullFloat64
 	var cnt int
-	err := db.conn.QueryRow(`
+	uidClause, uidArgs := userIDClause(userID)
+	args := append([]interface{}{start, end}, uidArgs...)
+	err := db.conn.QueryRowContext(ctx, `
 		SELECT 
 			COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0),
 			COALESCE(ABS(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END)), 0),
 			COUNT(*)
-		FROM records WHERE date >= ? AND date <= ?
-	`, start, end).Scan(&income, &expense, &cnt)
+		FROM records WHERE date >= ? AND date <= ?`+uidClause, args...).Scan(&income, &expense, &cnt)
 	if err != nil {
 		return nil, err
 	}
@@ -120,14 +133,15 @@ func (db *DB) YearlySummary(year int) (*models.Summary, error) {
 		Count:   cnt,
 	}
 	// 按月分项
-	rows, err := db.conn.Query(`
+	bkArgs := append([]interface{}{start, end}, uidArgs...)
+	rows, err := db.conn.QueryContext(ctx, `
 		SELECT strftime('%Y-%m', date) as month,
 			COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0),
 			COALESCE(ABS(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END)), 0),
 			COUNT(*)
-		FROM records WHERE date >= ? AND date <= ?
+		FROM records WHERE date >= ? AND date <= ?`+uidClause+`
 		GROUP BY month ORDER BY month
-	`, start, end)
+	`, bkArgs...)
 	if err != nil {
 		return s, nil
 	}
@@ -147,18 +161,19 @@ func (db *DB) YearlySummary(year int) (*models.Summary, error) {
 }
 
 // Report 报表：指定日期范围内的汇总及分项
-func (db *DB) Report(startDate, endDate string) (*models.Report, error) {
+func (db *DB) Report(ctx context.Context, startDate, endDate string, userID int64) (*models.Report, error) {
 	r := &models.Report{StartDate: startDate, EndDate: endDate}
 
 	var income, expense sql.NullFloat64
 	var cnt int
-	err := db.conn.QueryRow(`
+	uidClause, uidArgs := userIDClause(userID)
+	args := append([]interface{}{startDate, endDate}, uidArgs...)
+	err := db.conn.QueryRowContext(ctx, `
 		SELECT 
 			COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0),
 			COALESCE(ABS(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END)), 0),
 			COUNT(*)
-		FROM records WHERE date >= ? AND date <= ?
-	`, startDate, endDate).Scan(&income, &expense, &cnt)
+		FROM records WHERE date >= ? AND date <= ?`+uidClause, args...).Scan(&income, &expense, &cnt)
 	if err != nil {
 		return nil, err
 	}
@@ -168,15 +183,15 @@ func (db *DB) Report(startDate, endDate string) (*models.Report, error) {
 	r.Count = cnt
 
 	// 按日
-	rows, _ := db.conn.Query(`
+	rows, err := db.conn.QueryContext(ctx, `
 		SELECT date,
 			COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0),
 			COALESCE(ABS(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END)), 0),
 			COUNT(*)
-		FROM records WHERE date >= ? AND date <= ?
+		FROM records WHERE date >= ? AND date <= ?`+uidClause+`
 		GROUP BY date ORDER BY date
-	`, startDate, endDate)
-	if rows != nil {
+	`, append([]interface{}{startDate, endDate}, uidArgs...)...)
+	if err == nil && rows != nil {
 		defer rows.Close()
 		for rows.Next() {
 			var item models.BreakdownItem
@@ -192,16 +207,16 @@ func (db *DB) Report(startDate, endDate string) (*models.Report, error) {
 	}
 
 	// 按分类
-	catRows, _ := db.conn.Query(`
+	catRows, err := db.conn.QueryContext(ctx, `
 		SELECT COALESCE(category, '未分类') as cat,
 			COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0),
 			COALESCE(ABS(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END)), 0),
 			SUM(amount),
 			COUNT(*)
-		FROM records WHERE date >= ? AND date <= ?
+		FROM records WHERE date >= ? AND date <= ?`+uidClause+`
 		GROUP BY cat ORDER BY ABS(SUM(amount)) DESC
-	`, startDate, endDate)
-	if catRows != nil {
+	`, append([]interface{}{startDate, endDate}, uidArgs...)...)
+	if err == nil && catRows != nil {
 		defer catRows.Close()
 		for catRows.Next() {
 			var item models.CategoryItem

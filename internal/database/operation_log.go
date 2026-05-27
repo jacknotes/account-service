@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -40,8 +41,8 @@ func (db *DB) migrateOperationLogs() error {
 	return err
 }
 
-func (db *DB) LogOperation(userID int64, username, action, targetType, targetID, detail, ip, userAgent string) error {
-	_, err := db.conn.Exec(
+func (db *DB) LogOperation(ctx context.Context, userID int64, username, action, targetType, targetID, detail, ip, userAgent string) error {
+	_, err := db.conn.ExecContext(ctx,
 		`INSERT INTO operation_logs (user_id, username, action, target_type, target_id, detail, ip, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		userID, username, action, targetType, targetID, detail, ip, userAgent,
 	)
@@ -61,7 +62,7 @@ type OperationLog struct {
 	CreatedAt  string `json:"created_at"`
 }
 
-func (db *DB) ListOperationLogs(page, pageSize int, userID *int64, action string) ([]*OperationLog, int64, error) {
+func (db *DB) ListOperationLogs(ctx context.Context, page, pageSize int, userID *int64, action string) ([]*OperationLog, int64, error) {
 	if page <= 0 {
 		page = 1
 	}
@@ -82,14 +83,14 @@ func (db *DB) ListOperationLogs(page, pageSize int, userID *int64, action string
 	}
 
 	var total int64
-	if err := db.conn.QueryRow("SELECT COUNT(*) FROM operation_logs WHERE "+where, args...).Scan(&total); err != nil {
+	if err := db.conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM operation_logs WHERE "+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	query := `SELECT id, user_id, username, action, COALESCE(target_type,''), COALESCE(target_id,''), COALESCE(detail,''), COALESCE(ip,''), COALESCE(user_agent,''), created_at 
 	          FROM operation_logs WHERE ` + where + ` ORDER BY id DESC LIMIT ? OFFSET ?`
 	args = append(args, pageSize, offset)
-	rows, err := db.conn.Query(query, args...)
+	rows, err := db.conn.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}

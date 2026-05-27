@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"account-service/internal/models"
 	"database/sql"
 )
@@ -26,9 +27,9 @@ func (db *DB) migrateUsers() error {
 	return db.migrateOperationLogs()
 }
 
-func (db *DB) GetUserByUsername(username string) (*models.User, error) {
+func (db *DB) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
 	var u models.User
-	err := db.conn.QueryRow(
+	err := db.conn.QueryRowContext(ctx,
 		`SELECT id, username, COALESCE(role,'user'), password_hash, COALESCE(totp_secret,''), created_at FROM users WHERE username = ?`,
 		username,
 	).Scan(&u.ID, &u.Username, &u.Role, &u.PasswordHash, &u.TOTPSecret, &u.CreatedAt)
@@ -41,9 +42,9 @@ func (db *DB) GetUserByUsername(username string) (*models.User, error) {
 	return &u, nil
 }
 
-func (db *DB) GetUserByID(id int64) (*models.User, error) {
+func (db *DB) GetUserByID(ctx context.Context, id int64) (*models.User, error) {
 	var u models.User
-	err := db.conn.QueryRow(
+	err := db.conn.QueryRowContext(ctx,
 		`SELECT id, username, COALESCE(role,'user'), password_hash, COALESCE(totp_secret,''), created_at FROM users WHERE id = ?`,
 		id,
 	).Scan(&u.ID, &u.Username, &u.Role, &u.PasswordHash, &u.TOTPSecret, &u.CreatedAt)
@@ -56,12 +57,12 @@ func (db *DB) GetUserByID(id int64) (*models.User, error) {
 	return &u, nil
 }
 
-func (db *DB) CreateUser(u *models.User, passwordHash string) error {
+func (db *DB) CreateUser(ctx context.Context, u *models.User, passwordHash string) error {
 	role := u.Role
 	if role == "" {
 		role = models.RoleUser
 	}
-	res, err := db.conn.Exec(
+	res, err := db.conn.ExecContext(ctx,
 		`INSERT INTO users (username, role, password_hash, totp_secret) VALUES (?, ?, ?, ?)`,
 		u.Username, role, passwordHash, u.TOTPSecret,
 	)
@@ -73,24 +74,24 @@ func (db *DB) CreateUser(u *models.User, passwordHash string) error {
 	return nil
 }
 
-func (db *DB) UpdateUserPassword(id int64, passwordHash string) error {
-	_, err := db.conn.Exec(`UPDATE users SET password_hash = ? WHERE id = ?`, passwordHash, id)
+func (db *DB) UpdateUserPassword(ctx context.Context, id int64, passwordHash string) error {
+	_, err := db.conn.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, passwordHash, id)
 	return err
 }
 
-func (db *DB) SetTOTPSecret(id int64, secret string) error {
-	_, err := db.conn.Exec(`UPDATE users SET totp_secret = ? WHERE id = ?`, secret, id)
+func (db *DB) SetTOTPSecret(ctx context.Context, id int64, secret string) error {
+	_, err := db.conn.ExecContext(ctx, `UPDATE users SET totp_secret = ? WHERE id = ?`, secret, id)
 	return err
 }
 
-func (db *DB) UserCount() (int, error) {
+func (db *DB) UserCount(ctx context.Context) (int, error) {
 	var n int
-	err := db.conn.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n)
+	err := db.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
 	return n, err
 }
 
-func (db *DB) ListUsers() ([]*models.User, error) {
-	rows, err := db.conn.Query(
+func (db *DB) ListUsers(ctx context.Context) ([]*models.User, error) {
+	rows, err := db.conn.QueryContext(ctx,
 		`SELECT id, username, COALESCE(role,'user'), created_at FROM users ORDER BY id`,
 	)
 	if err != nil {
@@ -108,8 +109,8 @@ func (db *DB) ListUsers() ([]*models.User, error) {
 	return list, nil
 }
 
-func (db *DB) UpdateUser(id int64, username, role string) error {
-	res, err := db.conn.Exec(`UPDATE users SET username=?, role=? WHERE id=?`, username, role, id)
+func (db *DB) UpdateUser(ctx context.Context, id int64, username, role string) error {
+	res, err := db.conn.ExecContext(ctx, `UPDATE users SET username=?, role=? WHERE id=?`, username, role, id)
 	if err != nil {
 		return err
 	}
@@ -120,8 +121,8 @@ func (db *DB) UpdateUser(id int64, username, role string) error {
 	return nil
 }
 
-func (db *DB) DeleteUser(id int64) error {
-	res, err := db.conn.Exec(`DELETE FROM users WHERE id=?`, id)
+func (db *DB) DeleteUser(ctx context.Context, id int64) error {
+	res, err := db.conn.ExecContext(ctx, `DELETE FROM users WHERE id=?`, id)
 	if err != nil {
 		return err
 	}

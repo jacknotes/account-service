@@ -1,9 +1,9 @@
 package handlers
 
 import (
-	"account-service/internal/database"
 	"account-service/internal/middleware"
 	"account-service/internal/models"
+	"account-service/internal/service"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -13,11 +13,12 @@ import (
 )
 
 type RecordHandler struct {
-	db *database.DB
+	db     service.RecordService
+	logger service.OperationLogService
 }
 
-func NewRecordHandler(db *database.DB) *RecordHandler {
-	return &RecordHandler{db: db}
+func NewRecordHandler(db service.RecordService, logger service.OperationLogService) *RecordHandler {
+	return &RecordHandler{db: db, logger: logger}
 }
 
 // ListRecords 查询记录（支持日期范围和关键字）
@@ -25,15 +26,15 @@ func NewRecordHandler(db *database.DB) *RecordHandler {
 func (h *RecordHandler) ListRecords(c *gin.Context) {
 	var params models.QueryParams
 	if err := c.ShouldBindQuery(&params); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, err.Error())
 		return
 	}
-	list, total, err := h.db.List(&params)
+	list, total, err := h.db.List(c.Request.Context(), &params, middleware.GetUserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondServerError(c)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
+	respondOK(c, gin.H{
 		"data":  list,
 		"total": total,
 		"page":  params.Page,
@@ -45,16 +46,16 @@ func (h *RecordHandler) ListRecords(c *gin.Context) {
 func (h *RecordHandler) GetRecord(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		respondBadRequest(c, "invalid id")
 		return
 	}
-	r, err := h.db.GetByID(id)
+	r, err := h.db.GetByID(c.Request.Context(), id, middleware.GetUserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondServerError(c)
 		return
 	}
 	if r == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "record not found"})
+		respondError(c, http.StatusNotFound, "记录不存在")
 		return
 	}
 	c.JSON(http.StatusOK, r)
@@ -64,7 +65,7 @@ func (h *RecordHandler) GetRecord(c *gin.Context) {
 func (h *RecordHandler) CreateRecord(c *gin.Context) {
 	var req models.CreateRecordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, err.Error())
 		return
 	}
 	r := &models.Record{
@@ -73,14 +74,13 @@ func (h *RecordHandler) CreateRecord(c *gin.Context) {
 		Category:    req.Category,
 		Description: req.Description,
 	}
-	if err := h.db.Create(r); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	userID := middleware.GetUserID(c)
+	ctx := c.Request.Context()
+	if err := h.db.Create(ctx, r, userID); err != nil {
+		respondServerError(c)
 		return
 	}
-	uid := middleware.GetUserID(c)
-	username, _ := c.Get("username")
-	_ = h.db.LogOperation(uid, username.(string), database.OpCreateRecord, "record", strconv.FormatInt(r.ID, 10),
-		req.Date+" "+strconv.FormatFloat(req.Amount, 'f', 2, 64), c.ClientIP(), c.GetHeader("User-Agent"))
+	_ = h.logger.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpCreateRecord, "record", strconv.FormatInt(r.ID, 10), req.Description, c.ClientIP(), c.GetHeader("User-Agent"))
 	c.JSON(http.StatusCreated, r)
 }
 
@@ -88,46 +88,45 @@ func (h *RecordHandler) CreateRecord(c *gin.Context) {
 func (h *RecordHandler) UpdateRecord(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		respondBadRequest(c, "invalid id")
 		return
 	}
 	var req models.UpdateRecordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, err.Error())
 		return
 	}
-	if err := h.db.Update(id, &req); err != nil {
+	userID := middleware.GetUserID(c)
+	ctx := c.Request.Context()
+	if err := h.db.Update(ctx, id, userID, &req); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "record not found"})
+			respondError(c, http.StatusNotFound, "记录不存在")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondServerError(c)
 		return
 	}
-	uid := middleware.GetUserID(c)
-	username, _ := c.Get("username")
-	_ = h.db.LogOperation(uid, username.(string), database.OpUpdateRecord, "record", strconv.FormatInt(id, 10), "", c.ClientIP(), c.GetHeader("User-Agent"))
-	r, _ := h.db.GetByID(id)
-	c.JSON(http.StatusOK, r)
+	_ = h.logger.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpUpdateRecord, "record", strconv.FormatInt(id, 10), "", c.ClientIP(), c.GetHeader("User-Agent"))
+	respondOK(c, gin.H{"message": "已更新"})
 }
 
 // DeleteRecord 删除记录
 func (h *RecordHandler) DeleteRecord(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		respondBadRequest(c, "invalid id")
 		return
 	}
-	if err := h.db.Delete(id); err != nil {
+	userID := middleware.GetUserID(c)
+	ctx := c.Request.Context()
+	if err := h.db.Delete(ctx, id, userID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "record not found"})
+			respondError(c, http.StatusNotFound, "记录不存在")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondServerError(c)
 		return
 	}
-	uid := middleware.GetUserID(c)
-	username, _ := c.Get("username")
-	_ = h.db.LogOperation(uid, username.(string), database.OpDeleteRecord, "record", strconv.FormatInt(id, 10), "", c.ClientIP(), c.GetHeader("User-Agent"))
-	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+	_ = h.logger.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpDeleteRecord, "record", strconv.FormatInt(id, 10), "", c.ClientIP(), c.GetHeader("User-Agent"))
+	respondOK(c, gin.H{"message": "已删除"})
 }

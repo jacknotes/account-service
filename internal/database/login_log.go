@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 )
 
@@ -21,7 +22,7 @@ func (db *DB) migrateLoginLogs() error {
 	return err
 }
 
-func (db *DB) LogLogin(userID *int64, username string, success bool, ip, userAgent string) error {
+func (db *DB) LogLogin(ctx context.Context, userID *int64, username string, success bool, ip, userAgent string) error {
 	succ := 0
 	if success {
 		succ = 1
@@ -30,7 +31,7 @@ func (db *DB) LogLogin(userID *int64, username string, success bool, ip, userAge
 	if userID != nil {
 		uid = sql.NullInt64{Int64: *userID, Valid: true}
 	}
-	_, err := db.conn.Exec(
+	_, err := db.conn.ExecContext(ctx,
 		`INSERT INTO login_logs (user_id, username, success, ip, user_agent) VALUES (?, ?, ?, ?, ?)`,
 		uid, username, succ, ip, userAgent,
 	)

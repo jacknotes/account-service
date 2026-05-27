@@ -65,6 +65,14 @@ func GetRole(c *gin.Context) string {
 	return "user"
 }
 
+func GetUsername(c *gin.Context) string {
+	v, _ := c.Get("username")
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
 func RequireAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if GetRole(c) != "admin" {

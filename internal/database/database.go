@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"account-service/internal/models"
 	"database/sql"
 	"os"
@@ -59,10 +60,11 @@ func (db *DB) Close() error {
 	return db.conn.Close()
 }
 
-func (db *DB) Create(r *models.Record) error {
-	res, err := db.conn.Exec(
-		`INSERT INTO records (date, amount, category, description) VALUES (?, ?, ?, ?)`,
-		r.Date, r.Amount, r.Category, r.Description,
+func (db *DB) Create(ctx context.Context, r *models.Record, userID int64) error {
+	r.UserID = userID
+	res, err := db.conn.ExecContext(ctx,
+		`INSERT INTO records (user_id, date, amount, category, description) VALUES (?, ?, ?, ?, ?)`,
+		r.UserID, r.Date, r.Amount, r.Category, r.Description,
 	)
 	if err != nil {
 		return err
@@ -72,12 +74,18 @@ func (db *DB) Create(r *models.Record) error {
 	return nil
 }
 
-func (db *DB) GetByID(id int64) (*models.Record, error) {
+func (db *DB) GetByID(ctx context.Context, id, userID int64) (*models.Record, error) {
 	var r models.Record
-	err := db.conn.QueryRow(
-		`SELECT id, date, amount, category, description, created_at, updated_at 
-		 FROM records WHERE id = ?`, id,
-	).Scan(&r.ID, &r.Date, &r.Amount, &r.Category, &r.Description, &r.CreatedAt, &r.UpdatedAt)
+	query := `SELECT id, user_id, date, amount, category, description, created_at, updated_at 
+	          FROM records WHERE id = ?`
+	args := []interface{}{id}
+	if userID > 0 {
+		query += " AND (user_id = ? OR user_id IS NULL)"
+		args = append(args, userID)
+	}
+	err := db.conn.QueryRowContext(ctx, query, args...).Scan(
+		&r.ID, &r.UserID, &r.Date, &r.Amount, &r.Category, &r.Description, &r.CreatedAt, &r.UpdatedAt,
+	)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -87,13 +95,17 @@ func (db *DB) GetByID(id int64) (*models.Record, error) {
 	return &r, nil
 }
 
-func (db *DB) List(params *models.QueryParams) ([]*models.Record, int64, error) {
+func (db *DB) List(ctx context.Context, params *models.QueryParams, userID int64) ([]*models.Record, int64, error) {
 	params.Normalize()
 	offset := (params.Page - 1) * params.PageSize
 
 	var args []interface{}
 	where := "1=1"
 
+	if userID > 0 {
+		where += " AND (user_id = ? OR user_id IS NULL)"
+		args = append(args, userID)
+	}
 	if params.StartDate != "" {
 		where += " AND date >= ?"
 		args = append(args, params.StartDate)
@@ -111,15 +123,15 @@ func (db *DB) List(params *models.QueryParams) ([]*models.Record, int64, error) 
 	// count
 	var total int64
 	countQuery := "SELECT COUNT(*) FROM records WHERE " + where
-	if err := db.conn.QueryRow(countQuery, args...).Scan(&total); err != nil {
+	if err := db.conn.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	// list
-	query := `SELECT id, date, amount, category, description, created_at, updated_at 
+	query := `SELECT id, user_id, date, amount, category, description, created_at, updated_at 
 	          FROM records WHERE ` + where + ` ORDER BY date DESC, id DESC LIMIT ? OFFSET ?`
 	args = append(args, params.PageSize, offset)
-	rows, err := db.conn.Query(query, args...)
+	rows, err := db.conn.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -128,7 +140,7 @@ func (db *DB) List(params *models.QueryParams) ([]*models.Record, int64, error) 
 	var list []*models.Record
 	for rows.Next() {
 		var r models.Record
-		if err := rows.Scan(&r.ID, &r.Date, &r.Amount, &r.Category, &r.Description, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Date, &r.Amount, &r.Category, &r.Description, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, 0, err
 		}
 		list = append(list, &r)
@@ -136,8 +148,8 @@ func (db *DB) List(params *models.QueryParams) ([]*models.Record, int64, error) 
 	return list, total, nil
 }
 
-func (db *DB) Update(id int64, req *models.UpdateRecordRequest) error {
-	cur, err := db.GetByID(id)
+func (db *DB) Update(ctx context.Context, id, userID int64, req *models.UpdateRecordRequest) error {
+	cur, err := db.GetByID(ctx, id, userID)
 	if err != nil || cur == nil {
 		return sql.ErrNoRows
 	}
@@ -154,10 +166,13 @@ func (db *DB) Update(id int64, req *models.UpdateRecordRequest) error {
 	if req.Description != nil {
 		desc = *req.Description
 	}
-	res, err := db.conn.Exec(
-		`UPDATE records SET date=?, amount=?, category=?, description=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-		date, amount, category, desc, id,
-	)
+	query := "UPDATE records SET date=?, amount=?, category=?, description=?, updated_at=CURRENT_TIMESTAMP WHERE id=?"
+	args := []interface{}{date, amount, category, desc, id}
+	if userID > 0 {
+		query += " AND (user_id = ? OR user_id IS NULL)"
+		args = append(args, userID)
+	}
+	res, err := db.conn.ExecContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
@@ -168,8 +183,14 @@ func (db *DB) Update(id int64, req *models.UpdateRecordRequest) error {
 	return nil
 }
 
-func (db *DB) Delete(id int64) error {
-	res, err := db.conn.Exec("DELETE FROM records WHERE id=?", id)
+func (db *DB) Delete(ctx context.Context, id, userID int64) error {
+	query := "DELETE FROM records WHERE id=?"
+	args := []interface{}{id}
+	if userID > 0 {
+		query += " AND (user_id = ? OR user_id IS NULL)"
+		args = append(args, userID)
+	}
+	res, err := db.conn.ExecContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}

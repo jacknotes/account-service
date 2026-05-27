@@ -1,4 +1,6 @@
 const API = '/api';
+// NOTE: Token stored in localStorage - vulnerable to XSS.
+// For production, consider migrating to httpOnly SameSite cookies with a backend refresh-token flow.
 const TOKEN_KEY = 'account_token';
 
 function getToken() {

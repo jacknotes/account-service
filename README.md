@@ -54,24 +54,8 @@ docker run -d -p 8081:8081 \
   --name account-service \
   account-service
 
-# 或使用 docker-compose
-$ cat docker-compose.yml
-version: '2'
-services:
-  account-service:
-    #build: .
-    image: jacknotes/account-service:latest
-    ports:
-      - "8081:8081"
-    volumes:
-      - /data/account-service/data:/app/data
-    environment:
-      - PORT=8081
-      - DATABASE_PATH=/app/data/accounting.db
-      - JWT_SECRET=pOdwpiIU0BWds4Sd6WqYu3at9fdUlApM
-    restart: unless-stopped
-
-$ docker-compose up -d
+# 使用 docker-compose
+docker compose up -d
 ```
 
 访问 http://localhost:8081/app/
@@ -83,7 +67,7 @@ $ docker-compose up -d
 | PORT | 服务端口 | 8081 |
 | DATABASE_PATH | 数据库文件路径 | ./data/accounting.db |
 | FRONTEND_DIR | 前端静态文件目录 | ./frontend |
-| JWT_SECRET | JWT 签名密钥 | 默认值（生产环境务必修改） |
+| JWT_SECRET | JWT 签名密钥 | **必填**，至少 32 位随机字符串 |
 
 ## API 接口
 

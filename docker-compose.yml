@@ -10,5 +10,5 @@ services:
       - PORT=8081
       - DATABASE_PATH=/app/data/accounting.db
       # 生产环境请通过 .env 或 -e 覆盖，勿使用默认值
-      - JWT_SECRET=${JWT_SECRET:-change-this-in-production}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET 必须设置，至少 32 位随机字符串}
     restart: unless-stopped

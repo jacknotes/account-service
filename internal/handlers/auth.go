@@ -25,12 +25,12 @@ func NewAuthHandler(db *database.DB, jwtSecret string) *AuthHandler {
 
 // RegisterStatus 查询是否允许注册（无用户时可注册）
 func (h *AuthHandler) RegisterStatus(c *gin.Context) {
-	n, err := h.db.UserCount()
+	n, err := 	h.db.UserCount(c.Request.Context())
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"allow_register": false})
+		respondOK(c, gin.H{"allow_register": false})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"allow_register": n == 0})
+	respondOK(c, gin.H{"allow_register": n == 0})
 }
 
 type tokenResponse struct {
@@ -40,21 +40,22 @@ type tokenResponse struct {
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
+	ctx := c.Request.Context()
 	ip := c.ClientIP()
 	ua := c.GetHeader("User-Agent")
 	var req models.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, err.Error())
 		return
 	}
-	u, err := h.db.GetUserByUsername(req.Username)
+	u, err := 	h.db.GetUserByUsername(ctx, req.Username)
 	if err != nil || u == nil {
-		_ = h.db.LogLogin(nil, req.Username, false, ip, ua)
+		_ = 	h.db.LogLogin(ctx, nil, req.Username, false, ip, ua)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户名或密码错误"})
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.Password)); err != nil {
-		_ = h.db.LogLogin(&u.ID, req.Username, false, ip, ua)
+		_ = 	h.db.LogLogin(ctx, &u.ID, req.Username, false, ip, ua)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户名或密码错误"})
 		return
 	}
@@ -67,76 +68,88 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			return
 		}
 		if !totp.Validate(req.TOTPCode, u.TOTPSecret) {
-			_ = h.db.LogLogin(&u.ID, req.Username, false, ip, ua)
+			_ = 	h.db.LogLogin(ctx, &u.ID, req.Username, false, ip, ua)
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "TOTP 验证码错误"})
 			return
 		}
 	}
 	token, err := h.issueToken(u.ID, u.Username, u.Role)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成令牌失败"})
+		respondServerError(c)
 		return
 	}
-	_ = h.db.LogLogin(&u.ID, req.Username, true, ip, ua)
-	_ = h.db.LogOperation(u.ID, u.Username, database.OpLogin, "", "", "登录成功", ip, ua)
-	c.JSON(http.StatusOK, tokenResponse{
-		Token: token,
-		User:  gin.H{"id": u.ID, "username": u.Username, "role": u.Role, "totp_enabled": u.TOTPSecret != ""},
+	_ = 	h.db.LogLogin(ctx, &u.ID, req.Username, true, ip, ua)
+	_ = 	h.db.LogOperation(ctx, u.ID, u.Username, database.OpLogin, "", "", "登录成功", ip, ua)
+	respondOK(c, gin.H{
+		"token": token,
+		"user":  gin.H{"id": u.ID, "username": u.Username, "role": u.Role, "totp_enabled": u.TOTPSecret != ""},
 	})
 }
 
 func (h *AuthHandler) Register(c *gin.Context) {
-	n, err := h.db.UserCount()
+	ctx := c.Request.Context()
+	n, err := 	h.db.UserCount(ctx)
 	if err != nil || n > 0 {
 		c.JSON(http.StatusForbidden, gin.H{"error": "注册已关闭"})
 		return
 	}
 	var req models.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, err.Error())
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "注册失败"})
+		respondServerError(c)
 		return
 	}
 	u := &models.User{Username: req.Username, Role: models.RoleAdmin}
-	if err := h.db.CreateUser(u, string(hash)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "用户名已存在"})
+	if err := 	h.db.CreateUser(ctx, u, string(hash)); err != nil {
+		respondBadRequest(c, "用户名已存在")
 		return
 	}
-	_ = h.db.LogOperation(u.ID, u.Username, database.OpAddUser, "user", strconv.FormatInt(u.ID, 10), "首次注册", c.ClientIP(), c.GetHeader("User-Agent"))
-	token, _ := h.issueToken(u.ID, u.Username, u.Role)
-	c.JSON(http.StatusCreated, tokenResponse{
-		Token: token,
-		User:  gin.H{"id": u.ID, "username": u.Username, "role": u.Role},
+	_ = 	h.db.LogOperation(ctx, u.ID, u.Username, database.OpAddUser, "user", strconv.FormatInt(u.ID, 10), "首次注册", c.ClientIP(), c.GetHeader("User-Agent"))
+	token, err := h.issueToken(u.ID, u.Username, u.Role)
+	if err != nil {
+		respondServerError(c)
+		return
+	}
+	respondCreated(c, gin.H{
+		"token": token,
+		"user":  gin.H{"id": u.ID, "username": u.Username, "role": u.Role},
 	})
 }
 
 func (h *AuthHandler) Me(c *gin.Context) {
 	userID := middleware.GetUserID(c)
-	username, _ := c.Get("username")
 	role := middleware.GetRole(c)
-	u, _ := h.db.GetUserByID(userID)
+	u, err := 	h.db.GetUserByID(c.Request.Context(), userID)
+	if err != nil {
+		respondServerError(c)
+		return
+	}
 	totpEnabled := u != nil && u.TOTPSecret != ""
 	if u != nil && u.Role != "" {
 		role = u.Role
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"id": userID, "username": username, "role": role, "totp_enabled": totpEnabled,
+	respondOK(c, gin.H{
+		"id": userID, "username": middleware.GetUsername(c), "role": role, "totp_enabled": totpEnabled,
 	})
 }
 
 func (h *AuthHandler) TOTPSetup(c *gin.Context) {
 	userID := middleware.GetUserID(c)
-	u, _ := h.db.GetUserByID(userID)
+	u, err := 	h.db.GetUserByID(c.Request.Context(), userID)
+	if err != nil {
+		respondServerError(c)
+		return
+	}
 	if u == nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
 		return
 	}
 	if u.TOTPSecret != "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "已启用 TOTP，请先关闭"})
+		respondBadRequest(c, "已启用 TOTP，请先关闭")
 		return
 	}
 	key, err := totp.Generate(totp.GenerateOpts{
@@ -144,90 +157,95 @@ func (h *AuthHandler) TOTPSetup(c *gin.Context) {
 		AccountName: u.Username,
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成失败"})
+		respondServerError(c)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
+	respondOK(c, gin.H{
 		"secret": key.Secret(),
 		"url":    key.URL(),
 	})
 }
 
 func (h *AuthHandler) TOTPEnable(c *gin.Context) {
+	ctx := c.Request.Context()
 	userID := middleware.GetUserID(c)
 	var req struct {
 		Secret string `json:"secret" binding:"required"`
 		Code   string `json:"code" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, err.Error())
 		return
 	}
 	if !totp.Validate(req.Code, req.Secret) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "验证码错误，请重试"})
+		respondBadRequest(c, "验证码错误，请重试")
 		return
 	}
-	if err := h.db.SetTOTPSecret(userID, req.Secret); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败"})
+	if err := 	h.db.SetTOTPSecret(ctx, userID, req.Secret); err != nil {
+		respondServerError(c)
 		return
 	}
-	username, _ := c.Get("username")
-	_ = h.db.LogOperation(userID, username.(string), database.OpTOTPEnable, "", "", "", c.ClientIP(), c.GetHeader("User-Agent"))
-	c.JSON(http.StatusOK, gin.H{"message": "TOTP 已启用"})
+	_ = 	h.db.LogOperation(ctx, userID, middleware.GetUsername(c), database.OpTOTPEnable, "", "", "", c.ClientIP(), c.GetHeader("User-Agent"))
+	respondOK(c, gin.H{"message": "TOTP 已启用"})
 }
 
 // ChangePassword 修改密码
 func (h *AuthHandler) ChangePassword(c *gin.Context) {
+	ctx := c.Request.Context()
 	userID := middleware.GetUserID(c)
 	var req struct {
 		OldPassword string `json:"old_password" binding:"required"`
 		NewPassword string `json:"new_password" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, err.Error())
 		return
 	}
 	if len(req.NewPassword) < 6 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "新密码至少 6 位"})
+		respondBadRequest(c, "新密码至少 6 位")
 		return
 	}
-	u, _ := h.db.GetUserByID(userID)
+	u, err := 	h.db.GetUserByID(ctx, userID)
+	if err != nil {
+		respondServerError(c)
+		return
+	}
 	if u == nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.OldPassword)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "当前密码不正确"})
+		respondBadRequest(c, "当前密码不正确")
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "操作失败"})
+		respondServerError(c)
 		return
 	}
-	if err := h.db.UpdateUserPassword(userID, string(hash)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "操作失败"})
+	if err := 	h.db.UpdateUserPassword(ctx, userID, string(hash)); err != nil {
+		respondServerError(c)
 		return
 	}
-	username, _ := c.Get("username")
-	_ = h.db.LogOperation(userID, username.(string), database.OpChangePwd, "user", "", "修改自己的密码", c.ClientIP(), c.GetHeader("User-Agent"))
-	c.JSON(http.StatusOK, gin.H{"message": "密码已修改"})
+	_ = 	h.db.LogOperation(ctx, userID, middleware.GetUsername(c), database.OpChangePwd, "user", "", "修改自己的密码", c.ClientIP(), c.GetHeader("User-Agent"))
+	respondOK(c, gin.H{"message": "密码已修改"})
 }
 
 // AddUser 添加用户（需登录）
 func (h *AuthHandler) AddUser(c *gin.Context) {
+	ctx := c.Request.Context()
 	var req models.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, err.Error())
 		return
 	}
 	if len(req.Password) < 6 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "密码至少 6 位"})
+		respondBadRequest(c, "密码至少 6 位")
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "添加失败"})
+		respondServerError(c)
 		return
 	}
 	role := req.Role
@@ -235,46 +253,49 @@ func (h *AuthHandler) AddUser(c *gin.Context) {
 		role = models.RoleUser
 	}
 	u := &models.User{Username: req.Username, Role: role}
-	if err := h.db.CreateUser(u, string(hash)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "用户名已存在"})
+	if err := 	h.db.CreateUser(ctx, u, string(hash)); err != nil {
+		respondBadRequest(c, "用户名已存在")
 		return
 	}
 	operatorID := middleware.GetUserID(c)
-	operatorName, _ := c.Get("username")
-	_ = h.db.LogOperation(operatorID, operatorName.(string), database.OpAddUser, "user", strconv.FormatInt(u.ID, 10), "添加用户:"+u.Username, c.ClientIP(), c.GetHeader("User-Agent"))
-	c.JSON(http.StatusCreated, gin.H{"message": "用户已添加", "id": u.ID, "username": u.Username})
+	_ = 	h.db.LogOperation(ctx, operatorID, middleware.GetUsername(c), database.OpAddUser, "user", strconv.FormatInt(u.ID, 10), "添加用户:"+u.Username, c.ClientIP(), c.GetHeader("User-Agent"))
+	respondCreated(c, gin.H{"message": "用户已添加", "id": u.ID, "username": u.Username})
 }
 
 func (h *AuthHandler) TOTPDisable(c *gin.Context) {
+	ctx := c.Request.Context()
 	userID := middleware.GetUserID(c)
 	var req struct {
 		Password string `json:"password" binding:"required"`
 		Code     string `json:"code" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondBadRequest(c, err.Error())
 		return
 	}
-	u, _ := h.db.GetUserByID(userID)
+	u, err := 	h.db.GetUserByID(ctx, userID)
+	if err != nil {
+		respondServerError(c)
+		return
+	}
 	if u == nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "未登录"})
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.Password)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "密码不正确"})
+		respondBadRequest(c, "密码不正确")
 		return
 	}
 	if !totp.Validate(req.Code, u.TOTPSecret) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "TOTP 验证码错误"})
+		respondBadRequest(c, "TOTP 验证码错误")
 		return
 	}
-	if err := h.db.SetTOTPSecret(userID, ""); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "操作失败"})
+	if err := 	h.db.SetTOTPSecret(ctx, userID, ""); err != nil {
+		respondServerError(c)
 		return
 	}
-	username, _ := c.Get("username")
-	_ = h.db.LogOperation(userID, username.(string), database.OpTOTPDisable, "", "", "", c.ClientIP(), c.GetHeader("User-Agent"))
-	c.JSON(http.StatusOK, gin.H{"message": "TOTP 已关闭"})
+	_ = 	h.db.LogOperation(ctx, userID, middleware.GetUsername(c), database.OpTOTPDisable, "", "", "", c.ClientIP(), c.GetHeader("User-Agent"))
+	respondOK(c, gin.H{"message": "TOTP 已关闭"})
 }
 
 func (h *AuthHandler) issueToken(userID int64, username, role string) (string, error) {

@@ -4,6 +4,7 @@ import "time"
 
 type Record struct {
 	ID          int64     `json:"id"`
+	UserID      int64     `json:"user_id"`                         // 所属用户ID
 	Date        string    `json:"date" binding:"required"`         // 日期 YYYY-MM-DD
 	Amount      float64   `json:"amount" binding:"required"`       // 金额，正数为收入，负数为支出
 	Category    string    `json:"category"`                        // 分类

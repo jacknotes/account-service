@@ -1,7 +1,8 @@
 package handlers
 
 import (
-	"account-service/internal/database"
+	"account-service/internal/middleware"
+	"account-service/internal/service"
 	"net/http"
 	"strconv"
 
@@ -9,28 +10,28 @@ import (
 )
 
 type SummaryHandler struct {
-	db *database.DB
+	svc service.SummaryService
 }
 
-func NewSummaryHandler(db *database.DB) *SummaryHandler {
-	return &SummaryHandler{db: db}
+func NewSummaryHandler(svc service.SummaryService) *SummaryHandler {
+	return &SummaryHandler{svc: svc}
 }
 
 // DailySummary 每日汇总 GET /api/summary/daily?date=2024-02-06
 func (h *SummaryHandler) DailySummary(c *gin.Context) {
 	date := c.Query("date")
 	if date == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 date 参数"})
+		respondBadRequest(c, "缺少 date 参数")
 		return
 	}
-	s, err := h.db.DailySummary(date)
+	s, err := 	h.svc.DailySummary(c.Request.Context(), date, middleware.GetUserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondServerError(c)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"date":   date,
-		"income": s.Income,
+	respondOK(c, gin.H{
+		"date":    date,
+		"income":  s.Income,
 		"expense": s.Expense,
 		"balance": s.Balance,
 		"count":   s.Count,
@@ -43,21 +44,21 @@ func (h *SummaryHandler) MonthlySummary(c *gin.Context) {
 	year, _ := strconv.Atoi(c.Query("year"))
 	month, _ := strconv.Atoi(c.Query("month"))
 	if year < 1 || month < 1 || month > 12 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "year 和 month 参数无效"})
+		respondBadRequest(c, "year 和 month 参数无效")
 		return
 	}
-	s, err := h.db.MonthlySummary(year, month)
+	s, err := 	h.svc.MonthlySummary(c.Request.Context(), year, month, middleware.GetUserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondServerError(c)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"year":     year,
-		"month":    month,
-		"income":   s.Income,
-		"expense":  s.Expense,
-		"balance":  s.Balance,
-		"count":    s.Count,
+	respondOK(c, gin.H{
+		"year":      year,
+		"month":     month,
+		"income":    s.Income,
+		"expense":   s.Expense,
+		"balance":   s.Balance,
+		"count":     s.Count,
 		"breakdown": s.Breakdown,
 	})
 }
@@ -66,15 +67,15 @@ func (h *SummaryHandler) MonthlySummary(c *gin.Context) {
 func (h *SummaryHandler) YearlySummary(c *gin.Context) {
 	year, _ := strconv.Atoi(c.Query("year"))
 	if year < 1 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "year 参数无效"})
+		respondBadRequest(c, "year 参数无效")
 		return
 	}
-	s, err := h.db.YearlySummary(year)
+	s, err := 	h.svc.YearlySummary(c.Request.Context(), year, middleware.GetUserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondServerError(c)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
+	respondOK(c, gin.H{
 		"year":      year,
 		"income":    s.Income,
 		"expense":   s.Expense,
@@ -89,16 +90,16 @@ func (h *SummaryHandler) Report(c *gin.Context) {
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
 	if startDate == "" || endDate == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 start_date 或 end_date"})
+		respondBadRequest(c, "缺少 start_date 或 end_date")
 		return
 	}
 	if startDate > endDate {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "start_date 不能大于 end_date"})
+		respondBadRequest(c, "start_date 不能大于 end_date")
 		return
 	}
-	r, err := h.db.Report(startDate, endDate)
+	r, err := 	h.svc.Report(c.Request.Context(), startDate, endDate, middleware.GetUserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondServerError(c)
 		return
 	}
 	c.JSON(http.StatusOK, r)

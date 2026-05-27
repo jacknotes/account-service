@@ -3,6 +3,8 @@ if (!isLoggedIn()) {
   window.location.href = '/app/login.html';
 }
 
+function esc(str) { return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
 function markAppReady() {
   document.body.classList.remove('app-initializing');
 }
@@ -148,12 +150,12 @@ function renderTable(data) {
   }
   tableBody.innerHTML = list.map(r => `
     <tr>
-      <td>${r.date}</td>
+      <td>${esc(r.date)}</td>
       <td class="${r.amount >= 0 ? 'amount-income' : 'amount-expense'}">
         ${r.amount >= 0 ? '+' : ''}${r.amount.toFixed(2)}
       </td>
-      <td>${r.category || '-'}</td>
-      <td>${r.description || '-'}</td>
+      <td>${esc(r.category || '-')}</td>
+      <td>${esc(r.description || '-')}</td>
       <td>
         <div class="actions">
           <button class="btn btn-outline btn-sm btn-edit" data-id="${r.id}">编辑</button>
@@ -327,7 +329,9 @@ async function openTOTPModal() {
       const setup = await setupRes.json();
       totpSetupSecret = setup.secret;
       document.getElementById('totpSecretText').textContent = '密钥: ' + setup.secret;
-      document.getElementById('totpQR').innerHTML = '<img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(setup.url) + '" alt="QR" />';
+      var qrEl = document.getElementById('totpQR');
+qrEl.innerHTML = '';
+new QRCode(qrEl, { text: setup.url, width: 200, height: 200 });
       document.getElementById('totpEnableCode').value = '';
     }
     document.getElementById('settingsModal').classList.remove('show');
@@ -606,9 +610,9 @@ function renderUsersTable(sortField, page = currentUsersPage) {
   tbody.innerHTML = list.map(u => `
       <tr>
         <td>${u.id}</td>
-        <td>${u.username}</td>
+        <td>${esc(u.username)}</td>
         <td>${u.role === 'admin' ? '管理员' : '普通用户'}</td>
-        <td>${u.created_at ? u.created_at.slice(0, 10) : '-'}</td>
+        <td>${esc(u.created_at ? u.created_at.slice(0, 10) : '-')}</td>
         <td>
           <div class="actions">
             <button class="btn btn-outline btn-sm btn-edit-user" data-id="${u.id}">编辑</button>
@@ -825,11 +829,11 @@ function renderLogsTable(list = []) {
   if (!tbody) return;
   tbody.innerHTML = list.map(l => `
       <tr>
-        <td>${l.created_at ? l.created_at.slice(0, 19).replace('T', ' ') : '-'}</td>
-        <td>${l.username}</td>
-        <td>${l.action}</td>
-        <td>${l.detail || '-'}</td>
-        <td>${l.ip || '-'}</td>
+        <td>${esc(l.created_at ? l.created_at.slice(0, 19).replace('T', ' ') : '-')}</td>
+        <td>${esc(l.username)}</td>
+        <td>${esc(l.action)}</td>
+        <td>${esc(l.detail || '-')}</td>
+        <td>${esc(l.ip || '-')}</td>
       </tr>
     `).join('');
   refreshLogsSortIndicators();
@@ -994,12 +998,12 @@ function renderSummaryDetail() {
         <tbody>
           ${list.map(r => `
             <tr>
-              <td>${r.date}</td>
+              <td>${esc(r.date)}</td>
               <td class="${r.amount >= 0 ? 'amount-income' : 'amount-expense'}">
                 ${r.amount >= 0 ? '+' : ''}${r.amount.toFixed(2)}
               </td>
-              <td>${r.category || '-'}</td>
-              <td>${r.description || '-'}</td>
+              <td>${esc(r.category || '-')}</td>
+              <td>${esc(r.description || '-')}</td>
             </tr>
           `).join('')}
         </tbody>
@@ -1021,7 +1025,7 @@ function renderSummaryDetail() {
         <tbody>
           ${list.map(b => `
             <tr>
-              <td>${b.period}</td>
+              <td>${esc(b.period)}</td>
               <td class="amount-income">+${b.income.toFixed(2)}</td>
               <td class="amount-expense">-${b.expense.toFixed(2)}</td>
               <td>${b.balance.toFixed(2)}</td>
@@ -1279,7 +1283,7 @@ function renderReport(data) {
         <tbody>
           ${dailyList.map(d => `
             <tr>
-              <td>${d.period}</td>
+              <td>${esc(d.period)}</td>
               <td class="amount-income">+${d.income.toFixed(2)}</td>
               <td class="amount-expense">-${d.expense.toFixed(2)}</td>
               <td>${d.balance.toFixed(2)}</td>
@@ -1306,7 +1310,7 @@ function renderReport(data) {
         <tbody>
           ${catList.map(c => `
             <tr>
-              <td>${c.category}</td>
+              <td>${esc(c.category)}</td>
               <td class="amount-income">+${c.income.toFixed(2)}</td>
               <td class="amount-expense">-${c.expense.toFixed(2)}</td>
               <td class="${c.total >= 0 ? 'amount-income' : 'amount-expense'}">

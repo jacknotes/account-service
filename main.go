@@ -5,16 +5,25 @@ import (
 	"account-service/internal/database"
 	"account-service/internal/handlers"
 	"account-service/internal/middleware"
+	"context"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("配置加载失败: %v", err)
+	}
 	db, err := database.New(cfg.Database)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("数据库初始化失败: %v", err)
 	}
 	defer db.Close()
 
@@ -32,13 +41,15 @@ func main() {
 		c.Next()
 	})
 
+	// Rate limiter
+	rateLimiter := middleware.NewRateLimiter(1, 5)
 	api := r.Group("/api")
 	authHandler := handlers.NewAuthHandler(db, cfg.JWTSecret)
 
 	// 无需认证
 	api.GET("/auth/register/status", authHandler.RegisterStatus)
-	api.POST("/auth/login", authHandler.Login)
-	api.POST("/auth/register", authHandler.Register)
+	api.POST("/auth/login", rateLimiter.Limit(), authHandler.Login)
+	api.POST("/auth/register", rateLimiter.Limit(), authHandler.Register)
 
 	// 需要认证
 	auth := api.Group("")
@@ -62,7 +73,7 @@ func main() {
 		auth.POST("/auth/totp/enable", authHandler.TOTPEnable)
 		auth.POST("/auth/totp/disable", authHandler.TOTPDisable)
 
-		recordHandler := handlers.NewRecordHandler(db)
+		recordHandler := handlers.NewRecordHandler(db, db)
 		summaryHandler := handlers.NewSummaryHandler(db)
 		auth.GET("/records", recordHandler.ListRecords)
 		auth.GET("/records/:id", recordHandler.GetRecord)
@@ -79,6 +90,27 @@ func main() {
 	r.Static("/app", cfg.Frontend)
 	r.GET("/", func(c *gin.Context) { c.Redirect(302, "/app/login.html") })
 
-	log.Printf("服务启动: http://localhost:%s", cfg.Port)
-	log.Fatal(r.Run(":" + cfg.Port))
+	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r}
+
+	go func() {
+		log.Printf("服务启动: http://localhost:%s", cfg.Port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("服务启动失败: %v", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-quit
+	log.Printf("收到信号 %v，正在关闭服务...", sig)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("服务关闭异常: %v", err)
+	}
+
+	db.Close()
+	log.Println("服务已安全关闭")
 }
