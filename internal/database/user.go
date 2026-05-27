@@ -106,6 +106,9 @@ func (db *DB) ListUsers(ctx context.Context) ([]*models.User, error) {
 		}
 		list = append(list, &u)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return list, nil
 }
 

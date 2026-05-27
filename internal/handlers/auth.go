@@ -6,6 +6,7 @@ import (
 	"account-service/internal/models"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -14,13 +15,82 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// totpAttempt 跟踪单个用户的 TOTP 验证尝试
+type totpAttempt struct {
+	count     int
+	blockedAt time.Time
+}
+
+// TOTPRateLimiter 限制 TOTP 验证尝试频率，防止暴力破解
+type TOTPRateLimiter struct {
+	mu       sync.Mutex
+	attempts map[int64]*totpAttempt
+	maxTries int
+	window   time.Duration
+	blockDur time.Duration
+}
+
+// NewTOTPRateLimiter 创建 TOTP 速率限制器
+func NewTOTPRateLimiter() *TOTPRateLimiter {
+	return &TOTPRateLimiter{
+		attempts: make(map[int64]*totpAttempt),
+		maxTries: 5,
+		window:   5 * time.Minute,
+		blockDur: 5 * time.Minute,
+	}
+}
+
+// Allow 检查用户是否允许继续验证 TOTP
+func (rl *TOTPRateLimiter) Allow(userID int64) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	a, ok := rl.attempts[userID]
+	if !ok {
+		return true
+	}
+	if time.Since(a.blockedAt) < rl.blockDur && a.count >= rl.maxTries {
+		return false
+	}
+	if time.Since(a.blockedAt) >= rl.window {
+		delete(rl.attempts, userID)
+		return true
+	}
+	return a.count < rl.maxTries
+}
+
+// RecordFailure 记录一次失败的 TOTP 验证
+func (rl *TOTPRateLimiter) RecordFailure(userID int64) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	a, ok := rl.attempts[userID]
+	if !ok {
+		rl.attempts[userID] = &totpAttempt{count: 1, blockedAt: time.Now()}
+		return
+	}
+	if time.Since(a.blockedAt) >= rl.window {
+		a.count = 1
+		a.blockedAt = time.Now()
+		return
+	}
+	a.count++
+	a.blockedAt = time.Now()
+}
+
+// Reset 成功验证后清除记录
+func (rl *TOTPRateLimiter) Reset(userID int64) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	delete(rl.attempts, userID)
+}
+
 type AuthHandler struct {
-	db        *database.DB
-	jwtSecret string
+	db         *database.DB
+	jwtSecret  string
+	totpLimiter *TOTPRateLimiter
 }
 
 func NewAuthHandler(db *database.DB, jwtSecret string) *AuthHandler {
-	return &AuthHandler{db: db, jwtSecret: jwtSecret}
+	return &AuthHandler{db: db, jwtSecret: jwtSecret, totpLimiter: NewTOTPRateLimiter()}
 }
 
 // RegisterStatus 查询是否允许注册（无用户时可注册）
@@ -67,11 +137,18 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			})
 			return
 		}
+		if !h.totpLimiter.Allow(u.ID) {
+			_ = 	h.db.LogLogin(ctx, &u.ID, req.Username, false, ip, ua)
+			respondBadRequest(c, "TOTP 验证尝试过于频繁，请稍后再试")
+			return
+		}
 		if !totp.Validate(req.TOTPCode, u.TOTPSecret) {
+			h.totpLimiter.RecordFailure(u.ID)
 			_ = 	h.db.LogLogin(ctx, &u.ID, req.Username, false, ip, ua)
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "TOTP 验证码错误"})
 			return
 		}
+		h.totpLimiter.Reset(u.ID)
 	}
 	token, err := h.issueToken(u.ID, u.Username, u.Role)
 	if err != nil {
@@ -177,10 +254,16 @@ func (h *AuthHandler) TOTPEnable(c *gin.Context) {
 		respondBadRequest(c, err.Error())
 		return
 	}
+	if !h.totpLimiter.Allow(userID) {
+		respondBadRequest(c, "TOTP 验证尝试过于频繁，请稍后再试")
+		return
+	}
 	if !totp.Validate(req.Code, req.Secret) {
+		h.totpLimiter.RecordFailure(userID)
 		respondBadRequest(c, "验证码错误，请重试")
 		return
 	}
+	h.totpLimiter.Reset(userID)
 	if err := 	h.db.SetTOTPSecret(ctx, userID, req.Secret); err != nil {
 		respondServerError(c)
 		return
@@ -286,10 +369,16 @@ func (h *AuthHandler) TOTPDisable(c *gin.Context) {
 		respondBadRequest(c, "密码不正确")
 		return
 	}
+	if !h.totpLimiter.Allow(userID) {
+		respondBadRequest(c, "TOTP 验证尝试过于频繁，请稍后再试")
+		return
+	}
 	if !totp.Validate(req.Code, u.TOTPSecret) {
+		h.totpLimiter.RecordFailure(userID)
 		respondBadRequest(c, "TOTP 验证码错误")
 		return
 	}
+	h.totpLimiter.Reset(userID)
 	if err := 	h.db.SetTOTPSecret(ctx, userID, ""); err != nil {
 		respondServerError(c)
 		return

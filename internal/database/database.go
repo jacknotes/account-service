@@ -145,6 +145,9 @@ func (db *DB) List(ctx context.Context, params *models.QueryParams, userID int64
 		}
 		list = append(list, &r)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 	return list, total, nil
 }
 

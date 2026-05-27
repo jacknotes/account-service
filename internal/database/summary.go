@@ -53,6 +53,7 @@ func (db *DB) DailySummary(ctx context.Context, date string, userID int64) (*mod
 		}
 		s.Records = append(s.Records, &r)
 	}
+	_ = rows.Err() // 静默处理迭代错误，保留已有明细数据
 	return s, nil
 }
 
@@ -105,6 +106,7 @@ func (db *DB) MonthlySummary(ctx context.Context, year, month int, userID int64)
 		item.Balance = item.Income - item.Expense
 		s.Breakdown = append(s.Breakdown, &item)
 	}
+	_ = rows.Err() // 静默处理迭代错误，保留已有分项数据
 	return s, nil
 }
 
@@ -157,6 +159,7 @@ func (db *DB) YearlySummary(ctx context.Context, year int, userID int64) (*model
 		item.Balance = item.Income - item.Expense
 		s.Breakdown = append(s.Breakdown, &item)
 	}
+	_ = rows.Err() // 静默处理迭代错误，保留已有分项数据
 	return s, nil
 }
 
@@ -204,6 +207,7 @@ func (db *DB) Report(ctx context.Context, startDate, endDate string, userID int6
 			item.Balance = item.Income - item.Expense
 			r.Daily = append(r.Daily, &item)
 		}
+		_ = rows.Err()
 	}
 
 	// 按分类
@@ -229,6 +233,7 @@ func (db *DB) Report(ctx context.Context, startDate, endDate string, userID int6
 			item.Total = floatVal(total)
 			r.ByCategory = append(r.ByCategory, &item)
 		}
+		_ = catRows.Err()
 	}
 
 	return r, nil

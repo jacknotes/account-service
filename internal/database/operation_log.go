@@ -2,13 +2,12 @@ package database
 
 import (
 	"context"
-	"fmt"
+	"time"
 )
 
 // 操作类型常量
 const (
 	OpLogin        = "login"
-	OpLogout       = "logout"
 	OpCreateRecord = "create_record"
 	OpUpdateRecord = "update_record"
 	OpDeleteRecord = "delete_record"
@@ -50,16 +49,16 @@ func (db *DB) LogOperation(ctx context.Context, userID int64, username, action, 
 }
 
 type OperationLog struct {
-	ID         int64  `json:"id"`
-	UserID     int64  `json:"user_id"`
-	Username   string `json:"username"`
-	Action     string `json:"action"`
-	TargetType string `json:"target_type"`
-	TargetID   string `json:"target_id"`
-	Detail     string `json:"detail"`
-	IP         string `json:"ip"`
-	UserAgent  string `json:"user_agent"`
-	CreatedAt  string `json:"created_at"`
+	ID         int64     `json:"id"`
+	UserID     int64     `json:"user_id"`
+	Username   string    `json:"username"`
+	Action     string    `json:"action"`
+	TargetType string    `json:"target_type"`
+	TargetID   string    `json:"target_id"`
+	Detail     string    `json:"detail"`
+	IP         string    `json:"ip"`
+	UserAgent  string    `json:"user_agent"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 func (db *DB) ListOperationLogs(ctx context.Context, page, pageSize int, userID *int64, action string) ([]*OperationLog, int64, error) {
@@ -99,12 +98,13 @@ func (db *DB) ListOperationLogs(ctx context.Context, page, pageSize int, userID 
 	var list []*OperationLog
 	for rows.Next() {
 		var l OperationLog
-		var createdAt interface{}
-		if err := rows.Scan(&l.ID, &l.UserID, &l.Username, &l.Action, &l.TargetType, &l.TargetID, &l.Detail, &l.IP, &l.UserAgent, &createdAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.UserID, &l.Username, &l.Action, &l.TargetType, &l.TargetID, &l.Detail, &l.IP, &l.UserAgent, &l.CreatedAt); err != nil {
 			return nil, 0, err
 		}
-		l.CreatedAt = fmt.Sprint(createdAt)
 		list = append(list, &l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
 	}
 	return list, total, nil
 }

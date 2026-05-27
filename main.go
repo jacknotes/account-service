@@ -111,6 +111,5 @@ func main() {
 		log.Fatalf("服务关闭异常: %v", err)
 	}
 
-	db.Close()
 	log.Println("服务已安全关闭")
 }
