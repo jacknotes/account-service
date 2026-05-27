@@ -23,7 +23,11 @@ COPY --from=builder /build/account-service .
 COPY --from=builder /build/frontend ./frontend
 
 # 创建数据目录（SQLite 数据库）
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data && \
+    adduser -D -u 1001 appuser && \
+    chown -R appuser:appuser /app
+
+USER appuser
 
 # 默认端口
 ENV PORT=8081

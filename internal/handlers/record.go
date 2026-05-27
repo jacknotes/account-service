@@ -6,7 +6,6 @@ import (
 	"account-service/internal/service"
 	"database/sql"
 	"errors"
-	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -26,7 +25,7 @@ func NewRecordHandler(db service.RecordService, logger service.OperationLogServi
 func (h *RecordHandler) ListRecords(c *gin.Context) {
 	var params models.QueryParams
 	if err := c.ShouldBindQuery(&params); err != nil {
-		respondBadRequest(c, err.Error())
+		respondBadRequest(c, "请求参数错误")
 		return
 	}
 	list, total, err := h.db.List(c.Request.Context(), &params, middleware.GetUserID(c))
@@ -55,17 +54,17 @@ func (h *RecordHandler) GetRecord(c *gin.Context) {
 		return
 	}
 	if r == nil {
-		respondError(c, http.StatusNotFound, "记录不存在")
+		respondNotFound(c, "记录")
 		return
 	}
-	c.JSON(http.StatusOK, r)
+	respondOK(c, gin.H{"data": r})
 }
 
 // CreateRecord 创建记录
 func (h *RecordHandler) CreateRecord(c *gin.Context) {
 	var req models.CreateRecordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		respondBadRequest(c, err.Error())
+		respondBadRequest(c, "请求参数错误")
 		return
 	}
 	r := &models.Record{
@@ -81,7 +80,7 @@ func (h *RecordHandler) CreateRecord(c *gin.Context) {
 		return
 	}
 	_ = h.logger.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpCreateRecord, "record", strconv.FormatInt(r.ID, 10), req.Description, c.ClientIP(), c.GetHeader("User-Agent"))
-	c.JSON(http.StatusCreated, r)
+	respondCreated(c, gin.H{"data": r})
 }
 
 // UpdateRecord 更新记录
@@ -93,14 +92,14 @@ func (h *RecordHandler) UpdateRecord(c *gin.Context) {
 	}
 	var req models.UpdateRecordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		respondBadRequest(c, err.Error())
+		respondBadRequest(c, "请求参数错误")
 		return
 	}
 	userID := middleware.GetUserID(c)
 	ctx := c.Request.Context()
 	if err := h.db.Update(ctx, id, userID, &req); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			respondError(c, http.StatusNotFound, "记录不存在")
+			respondNotFound(c, "记录")
 			return
 		}
 		respondServerError(c)
@@ -121,7 +120,7 @@ func (h *RecordHandler) DeleteRecord(c *gin.Context) {
 	ctx := c.Request.Context()
 	if err := h.db.Delete(ctx, id, userID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			respondError(c, http.StatusNotFound, "记录不存在")
+			respondNotFound(c, "记录")
 			return
 		}
 		respondServerError(c)

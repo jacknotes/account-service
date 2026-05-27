@@ -1,9 +1,9 @@
 package handlers
 
 import (
-	"account-service/internal/database"
 	"account-service/internal/middleware"
 	"account-service/internal/models"
+	"account-service/internal/service"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -13,9 +13,22 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+var actionNameMap = map[string]string{
+	service.OpLogin:         "登录",
+	service.OpCreateRecord:  "创建记账",
+	service.OpUpdateRecord:  "更新记账",
+	service.OpDeleteRecord:  "删除记账",
+	service.OpAddUser:       "添加用户",
+	service.OpUpdateUser:    "更新用户",
+	service.OpDeleteUser:    "删除用户",
+	service.OpChangePwd:     "修改密码",
+	service.OpTOTPEnable:    "启用TOTP",
+	service.OpTOTPDisable:   "关闭TOTP",
+}
+
 // ListUsers 用户列表（管理员）
 func (h *AuthHandler) ListUsers(c *gin.Context) {
-	list, err := h.db.ListUsers(c.Request.Context())
+	list, err := h.users.ListUsers(c.Request.Context())
 	if err != nil {
 		respondServerError(c)
 		return
@@ -30,9 +43,9 @@ func (h *AuthHandler) GetUser(c *gin.Context) {
 		respondBadRequest(c, "invalid id")
 		return
 	}
-	u, err := h.db.GetUserByID(c.Request.Context(), id)
+	u, err := h.users.GetUserByID(c.Request.Context(), id)
 	if err != nil || u == nil {
-		respondNotFound(c)
+		respondNotFound(c, "用户")
 		return
 	}
 	respondOK(c, gin.H{
@@ -53,7 +66,7 @@ func (h *AuthHandler) UpdateUser(c *gin.Context) {
 		Role     string `json:"role" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		respondBadRequest(c, err.Error())
+		respondBadRequest(c, "请求参数错误")
 		return
 	}
 	if req.Role != models.RoleAdmin && req.Role != models.RoleUser {
@@ -65,7 +78,7 @@ func (h *AuthHandler) UpdateUser(c *gin.Context) {
 		respondBadRequest(c, "不能取消自己的管理员权限")
 		return
 	}
-	if err := h.db.UpdateUser(ctx, id, req.Username, req.Role); err != nil {
+	if err := h.users.UpdateUser(ctx, id, req.Username, req.Role); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			respondError(c, http.StatusNotFound, "用户不存在")
 			return
@@ -73,7 +86,7 @@ func (h *AuthHandler) UpdateUser(c *gin.Context) {
 		respondBadRequest(c, "用户名已存在")
 		return
 	}
-	_ = h.db.LogOperation(ctx, curUserID, middleware.GetUsername(c), database.OpUpdateUser, "user", strconv.FormatInt(id, 10), "更新用户:"+req.Username, c.ClientIP(), c.GetHeader("User-Agent"))
+	_ = h.ops.LogOperation(ctx, curUserID, middleware.GetUsername(c), service.OpUpdateUser, "user", strconv.FormatInt(id, 10), "更新用户:"+req.Username, c.ClientIP(), c.GetHeader("User-Agent"))
 	respondOK(c, gin.H{"message": "已更新"})
 }
 
@@ -90,20 +103,24 @@ func (h *AuthHandler) DeleteUser(c *gin.Context) {
 		respondBadRequest(c, "不能删除自己")
 		return
 	}
-	u, err := h.db.GetUserByID(ctx, id)
+	u, err := h.users.GetUserByID(ctx, id)
 	if err != nil {
 		respondServerError(c)
 		return
 	}
-	if u != nil && u.Role == models.RoleAdmin {
+	if u == nil {
+		respondNotFound(c, "用户")
+		return
+	}
+	if u.Role == models.RoleAdmin {
 		respondBadRequest(c, "不能删除其他管理员")
 		return
 	}
-	if err := h.db.DeleteUser(ctx, id); err != nil {
-		respondNotFound(c)
+	if err := h.users.DeleteUser(ctx, id); err != nil {
+		respondNotFound(c, "用户")
 		return
 	}
-	_ = h.db.LogOperation(ctx, curUserID, middleware.GetUsername(c), database.OpDeleteUser, "user", strconv.FormatInt(id, 10), "删除用户:"+u.Username, c.ClientIP(), c.GetHeader("User-Agent"))
+	_ = h.ops.LogOperation(ctx, curUserID, middleware.GetUsername(c), service.OpDeleteUser, "user", strconv.FormatInt(id, 10), "删除用户:"+u.Username, c.ClientIP(), c.GetHeader("User-Agent"))
 	respondOK(c, gin.H{"message": "已删除"})
 }
 
@@ -119,20 +136,20 @@ func (h *AuthHandler) AdminChangeUserPassword(c *gin.Context) {
 		Password string `json:"password" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		respondBadRequest(c, err.Error())
+		respondBadRequest(c, "请求参数错误")
 		return
 	}
 	if len(req.Password) < 6 {
 		respondBadRequest(c, "密码至少 6 位")
 		return
 	}
-	u, err := h.db.GetUserByID(ctx, id)
+	u, err := h.users.GetUserByID(ctx, id)
 	if err != nil {
 		respondServerError(c)
 		return
 	}
 	if u == nil {
-		respondNotFound(c)
+		respondNotFound(c, "用户")
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
@@ -140,12 +157,12 @@ func (h *AuthHandler) AdminChangeUserPassword(c *gin.Context) {
 		respondServerError(c)
 		return
 	}
-	if err := h.db.UpdateUserPassword(ctx, id, string(hash)); err != nil {
+	if err := h.users.UpdateUserPassword(ctx, id, string(hash)); err != nil {
 		respondServerError(c)
 		return
 	}
 	operatorID := middleware.GetUserID(c)
-	_ = h.db.LogOperation(ctx, operatorID, middleware.GetUsername(c), database.OpChangePwd, "user", strconv.FormatInt(id, 10), "管理员修改用户"+u.Username+"的密码", c.ClientIP(), c.GetHeader("User-Agent"))
+	_ = h.ops.LogOperation(ctx, operatorID, middleware.GetUsername(c), service.OpChangePwd, "user", strconv.FormatInt(id, 10), "管理员修改用户"+u.Username+"的密码", c.ClientIP(), c.GetHeader("User-Agent"))
 	respondOK(c, gin.H{"message": "密码已修改"})
 }
 
@@ -160,19 +177,13 @@ func (h *AuthHandler) ListOperationLogs(c *gin.Context) {
 		}
 	}
 	action := c.Query("action")
-	list, total, err := h.db.ListOperationLogs(c.Request.Context(), page, pageSize, userID, action)
+	list, total, err := h.ops.ListOperationLogs(c.Request.Context(), page, pageSize, userID, action)
 	if err != nil {
 		respondServerError(c)
 		return
 	}
-	actionNames := map[string]string{
-		database.OpLogin: "登录", database.OpCreateRecord: "创建记账", database.OpUpdateRecord: "更新记账",
-		database.OpDeleteRecord: "删除记账", database.OpAddUser: "添加用户", database.OpUpdateUser: "更新用户",
-		database.OpDeleteUser: "删除用户", database.OpChangePwd: "修改密码", database.OpTOTPEnable: "启用TOTP",
-		database.OpTOTPDisable: "关闭TOTP",
-	}
 	for _, l := range list {
-		if name, ok := actionNames[l.Action]; ok {
+		if name, ok := actionNameMap[l.Action]; ok {
 			l.Action = name
 		}
 	}

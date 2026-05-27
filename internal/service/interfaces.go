@@ -40,10 +40,10 @@ type UserService interface {
 }
 
 // OperationLogService defines audit logging operations.
-// LogLogin and ListOperationLogs are not included because they return database-specific types;
-// they are accessed directly via *database.DB in admin handlers.
 type OperationLogService interface {
 	LogOperation(ctx context.Context, userID int64, username, action, targetType, targetID, detail, ip, userAgent string) error
+	LogLogin(ctx context.Context, userID *int64, username string, success bool, ip, userAgent string) error
+	ListOperationLogs(ctx context.Context, page, pageSize int, userID *int64, action string) ([]*OperationLogEntry, int64, error)
 }
 
 // OperationLogEntry represents a single operation log row.

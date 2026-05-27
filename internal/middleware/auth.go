@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -12,6 +13,7 @@ type Claims struct {
 	UserID   int64  `json:"uid"`
 	Username string `json:"username"`
 	Role     string `json:"role"`
+	Type     string `json:"type"`
 	jwt.RegisteredClaims
 }
 
@@ -30,14 +32,27 @@ func Auth(jwtSecret string) gin.HandlerFunc {
 			return
 		}
 		token, err := jwt.ParseWithClaims(parts[1], &Claims{}, func(t *jwt.Token) (interface{}, error) {
+			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+			}
 			return []byte(jwtSecret), nil
 		})
-		if err != nil || !token.Valid {
+		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "登录已过期，请重新登录"})
 			c.Abort()
 			return
 		}
-		claims := token.Claims.(*Claims)
+		if !token.Valid {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "登录已过期，请重新登录"})
+			c.Abort()
+			return
+		}
+		claims, ok := token.Claims.(*Claims)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "登录已过期，请重新登录"})
+			c.Abort()
+			return
+		}
 		c.Set("user_id", claims.UserID)
 		c.Set("username", claims.Username)
 		role := claims.Role

@@ -60,7 +60,31 @@ docker compose up -d
 
 访问 http://localhost:8081/app/
 
-### 5. 环境变量（可选）
+### 5. TLS / 反向代理
+
+本服务默认以 HTTP 明文方式运行。在生产环境中，**强烈建议** 在反向代理（如 Nginx、Caddy、Traefik）后运行，由代理层处理 HTTPS 终止。
+
+示例 Nginx 配置：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name your-domain.com;
+
+    ssl_certificate     /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8081;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+### 6. 环境变量（可选）
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
@@ -68,6 +92,10 @@ docker compose up -d
 | DATABASE_PATH | 数据库文件路径 | ./data/accounting.db |
 | FRONTEND_DIR | 前端静态文件目录 | ./frontend |
 | JWT_SECRET | JWT 签名密钥 | **必填**，至少 32 位随机字符串 |
+| ALLOWED_ORIGINS | CORS 允许的域名（逗号分隔，`*` 为允许所有） | `*` |
+| HTTP_READ_TIMEOUT | HTTP 读取超时（如 `10s`、`30s`） | `10s` |
+| HTTP_WRITE_TIMEOUT | HTTP 写入超时（如 `10s`、`30s`） | `10s` |
+| HTTP_IDLE_TIMEOUT | HTTP 空闲超时（如 `60s`、`120s`） | `60s` |
 
 ## API 接口
 
@@ -133,9 +161,12 @@ GET /api/records?start_date=2024-01-01&end_date=2024-12-31&keyword=餐饮&page=1
 ├── internal/
 │   ├── database/        # 数据库操作
 │   ├── handlers/        # API 处理器
-│   └── models/          # 数据模型
+│   ├── middleware/       # 中间件（认证、限流）
+│   ├── models/          # 数据模型
+│   └── service/         # 服务接口
 ├── frontend/            # 前端静态资源
 │   ├── index.html
+│   ├── login.html
 │   ├── style.css
 │   └── app.js
 └── data/                # SQLite 数据库（自动创建）

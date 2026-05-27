@@ -158,10 +158,121 @@ func TestSummaryHandler_DailySummary(t *testing.T) {
 	}
 }
 
+func TestRecordHandler_CreateRecord_InvalidJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newTestDB(t)
+	h := NewRecordHandler(db, db)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/api/records", strings.NewReader(`{invalid json}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	setupAuthContext(1, "testuser", "admin")(c)
+
+	h.CreateRecord(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestRecordHandler_UpdateRecord_NotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newTestDB(t)
+	h := NewRecordHandler(db, db)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("PUT", "/api/records/999", strings.NewReader(`{"date":"2024-01-01","amount":100}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "id", Value: "999"}}
+	setupAuthContext(1, "testuser", "admin")(c)
+
+	h.UpdateRecord(c)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404, body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRecordHandler_DeleteRecord_NotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newTestDB(t)
+	h := NewRecordHandler(db, db)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("DELETE", "/api/records/999", nil)
+	c.Params = gin.Params{{Key: "id", Value: "999"}}
+	setupAuthContext(1, "testuser", "admin")(c)
+
+	h.DeleteRecord(c)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404, body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSummaryHandler_DailySummary_NoData(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newTestDB(t)
+	h := NewSummaryHandler(db)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/api/summary/daily?date=2099-12-01", nil)
+	setupAuthContext(1, "testuser", "admin")(c)
+
+	h.DailySummary(c)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"income":0`) || !strings.Contains(body, `"expense":0`) {
+		t.Errorf("body = %s, should contain income:0 and expense:0", body)
+	}
+}
+
+func TestAuthHandler_Register_ShortUsername(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newTestDB(t)
+	h := NewAuthHandler(db, db, db, "test-secret-key-for-testing-123456789")
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/api/auth/register", strings.NewReader(`{"username":"a","password":"test123"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.Register(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400, body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAuthHandler_Register_TooLongUsername(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newTestDB(t)
+	h := NewAuthHandler(db, db, db, "test-secret-key-for-testing-123456789")
+
+	longName := "abcdefghijklmnopqrstuvwxyz1234567"
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/api/auth/register", strings.NewReader(`{"username":"`+longName+`","password":"test123"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.Register(c)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400, body: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestAuthHandler_RegisterStatus(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)
-	h := NewAuthHandler(db, "test-secret")
+	h := NewAuthHandler(db, db, db, "test-secret")
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -180,7 +291,7 @@ func TestAuthHandler_RegisterStatus(t *testing.T) {
 func TestAuthHandler_RegisterAndLogin(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := newTestDB(t)
-	h := NewAuthHandler(db, "test-secret-key-for-testing-123456789")
+	h := NewAuthHandler(db, db, db, "test-secret-key-for-testing-123456789")
 
 	// Register
 	w := httptest.NewRecorder()

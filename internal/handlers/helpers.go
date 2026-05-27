@@ -21,9 +21,9 @@ func respondServerError(c *gin.Context) {
 	respondError(c, http.StatusInternalServerError, "服务器内部错误")
 }
 
-// respondNotFound sends a 404 error response.
-func respondNotFound(c *gin.Context) {
-	respondError(c, http.StatusNotFound, "用户不存在")
+// respondNotFound sends a 404 error response with the given entity name.
+func respondNotFound(c *gin.Context, entity string) {
+	respondError(c, http.StatusNotFound, entity+"不存在")
 }
 
 // respondOK sends a 200 JSON response with arbitrary data.

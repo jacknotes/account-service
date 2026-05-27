@@ -6,10 +6,11 @@ import (
 	"account-service/internal/handlers"
 	"account-service/internal/middleware"
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,11 +20,13 @@ import (
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("配置加载失败: %v", err)
+		slog.Error("配置加载失败", "error", err)
+		os.Exit(1)
 	}
 	db, err := database.New(cfg.Database)
 	if err != nil {
-		log.Fatalf("数据库初始化失败: %v", err)
+		slog.Error("数据库初始化失败", "error", err)
+		os.Exit(1)
 	}
 	defer db.Close()
 
@@ -31,7 +34,18 @@ func main() {
 
 	// CORS 跨域
 	r.Use(func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
+		origin := c.Request.Header.Get("Origin")
+		if cfg.AllowedOrigins == "*" {
+			c.Header("Access-Control-Allow-Origin", "*")
+		} else {
+			for _, allowed := range strings.Split(cfg.AllowedOrigins, ",") {
+				allowed = strings.TrimSpace(allowed)
+				if origin == allowed {
+					c.Header("Access-Control-Allow-Origin", origin)
+					break
+				}
+			}
+		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		if c.Request.Method == "OPTIONS" {
@@ -42,14 +56,20 @@ func main() {
 	})
 
 	// Rate limiter
-	rateLimiter := middleware.NewRateLimiter(1, 5)
+	loginLimiter := middleware.NewRateLimiter(1, 3) // 降 burst: 5→3
+	defer loginLimiter.Stop()
+	globalLimiter := middleware.NewRateLimiter(10, 30)
+	defer globalLimiter.Stop()
+
 	api := r.Group("/api")
-	authHandler := handlers.NewAuthHandler(db, cfg.JWTSecret)
+	api.Use(globalLimiter.Limit())
+	authHandler := handlers.NewAuthHandler(db, db, db, cfg.JWTSecret)
 
 	// 无需认证
 	api.GET("/auth/register/status", authHandler.RegisterStatus)
-	api.POST("/auth/login", rateLimiter.Limit(), authHandler.Login)
-	api.POST("/auth/register", rateLimiter.Limit(), authHandler.Register)
+	api.POST("/auth/login", loginLimiter.Limit(), authHandler.Login)
+	api.POST("/auth/register", loginLimiter.Limit(), authHandler.Register)
+	api.POST("/auth/refresh", loginLimiter.Limit(), authHandler.Refresh)
 
 	// 需要认证
 	auth := api.Group("")
@@ -86,30 +106,48 @@ func main() {
 		auth.GET("/report", summaryHandler.Report)
 	}
 
+	// 健康检查
+	r.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
+	r.GET("/readyz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
+
 	// 前端静态文件（放 /app 下避免与 /api 路由冲突）
 	r.Static("/app", cfg.Frontend)
 	r.GET("/", func(c *gin.Context) { c.Redirect(302, "/app/login.html") })
 
-	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r}
+	srv := &http.Server{
+		Addr:         ":" + cfg.Port,
+		Handler:      r,
+		ReadTimeout:  cfg.ReadTimeout,
+		WriteTimeout: cfg.WriteTimeout,
+		IdleTimeout:  cfg.IdleTimeout,
+	}
 
 	go func() {
-		log.Printf("服务启动: http://localhost:%s", cfg.Port)
+		slog.Info("服务启动", "addr", "http://localhost:"+cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("服务启动失败: %v", err)
+			slog.Error("服务启动失败", "error", err)
+			os.Exit(1)
 		}
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-quit
-	log.Printf("收到信号 %v，正在关闭服务...", sig)
+	slog.Info("收到信号，正在关闭服务", "signal", sig)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("服务关闭异常: %v", err)
+		slog.Error("服务关闭异常，强制关闭", "error", err)
 	}
+	// 超时后强制关闭活跃连接
+	closeCtx, closeCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer closeCancel()
+	if err := srv.Close(); err != nil {
+		slog.Error("强制关闭连接异常", "error", err)
+	}
+	<-closeCtx.Done()
 
-	log.Println("服务已安全关闭")
+	slog.Info("服务已安全关闭")
 }

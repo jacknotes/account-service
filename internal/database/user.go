@@ -4,6 +4,7 @@ import (
 	"context"
 	"account-service/internal/models"
 	"database/sql"
+	"fmt"
 )
 
 func (db *DB) migrateUsers() error {
@@ -69,7 +70,10 @@ func (db *DB) CreateUser(ctx context.Context, u *models.User, passwordHash strin
 	if err != nil {
 		return err
 	}
-	id, _ := res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("failed to get last insert id: %w", err)
+	}
 	u.ID = id
 	return nil
 }
@@ -117,7 +121,10 @@ func (db *DB) UpdateUser(ctx context.Context, id int64, username, role string) e
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
 	if n == 0 {
 		return sql.ErrNoRows
 	}
@@ -129,7 +136,10 @@ func (db *DB) DeleteUser(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
 	if n == 0 {
 		return sql.ErrNoRows
 	}

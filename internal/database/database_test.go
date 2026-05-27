@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -190,6 +191,75 @@ func TestDailySummary(t *testing.T) {
 	}
 }
 
+func TestUpdateRecord_NotFound(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	err := db.Update(ctx, 999, 1, &models.UpdateRecordRequest{})
+	if err != sql.ErrNoRows {
+		t.Errorf("Update(999) = %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestDeleteRecord_NotFound(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	err := db.Delete(ctx, 999, 1)
+	if err != sql.ErrNoRows {
+		t.Errorf("Delete(999) = %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestDailySummary_NoRecords(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	s, err := db.DailySummary(ctx, "2099-01-01", 1)
+	if err != nil {
+		t.Fatalf("DailySummary() = %v", err)
+	}
+	if s.Income != 0 || s.Expense != 0 || s.Count != 0 {
+		t.Errorf("summary = income=%f expense=%f count=%d, want zeros", s.Income, s.Expense, s.Count)
+	}
+	if len(s.Records) != 0 {
+		t.Errorf("records = %d, want 0", len(s.Records))
+	}
+}
+
+func TestGetUserByUsername_NotFound(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	u, err := db.GetUserByUsername(ctx, "nonexistent")
+	if err != nil {
+		t.Fatalf("GetUserByUsername() = %v", err)
+	}
+	if u != nil {
+		t.Error("GetUserByUsername() should return nil for unknown user")
+	}
+}
+
+func TestUpdateUser_NotFound(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	err := db.UpdateUser(ctx, 999, "test", models.RoleUser)
+	if err != sql.ErrNoRows {
+		t.Errorf("UpdateUser(999) = %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestDeleteUser_NotFound(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	err := db.DeleteUser(ctx, 999)
+	if err != sql.ErrNoRows {
+		t.Errorf("DeleteUser(999) = %v, want sql.ErrNoRows", err)
+	}
+}
+
 func TestOperationLog(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -225,5 +295,127 @@ func TestEnvironmentVariable(t *testing.T) {
 	val := os.Getenv("JWT_SECRET")
 	if val == "" {
 		t.Error("JWT_SECRET not set")
+	}
+}
+
+func TestMonthlySummary(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	db.Create(ctx, &models.Record{Date: "2024-01-05", Amount: 5000, Category: "工资"}, 1)
+	db.Create(ctx, &models.Record{Date: "2024-01-10", Amount: -300, Category: "购物"}, 1)
+	db.Create(ctx, &models.Record{Date: "2024-01-20", Amount: -150, Category: "餐饮"}, 1)
+
+	s, err := db.MonthlySummary(ctx, 2024, 1, 1)
+	if err != nil {
+		t.Fatalf("MonthlySummary() = %v", err)
+	}
+	if s.Income != 5000 || s.Expense != 450 || s.Count != 3 {
+		t.Errorf("summary = income=%f expense=%f count=%d, want 5000/450/3", s.Income, s.Expense, s.Count)
+	}
+	if s.Balance != 5000-450 {
+		t.Errorf("balance = %f, want %f", s.Balance, float64(5000-450))
+	}
+	if len(s.Breakdown) == 0 {
+		t.Error("breakdown should not be empty")
+	}
+}
+
+func TestYearlySummary(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	db.Create(ctx, &models.Record{Date: "2024-01-15", Amount: 10000, Category: "奖金"}, 1)
+	db.Create(ctx, &models.Record{Date: "2024-06-15", Amount: -2000, Category: "旅游"}, 1)
+
+	s, err := db.YearlySummary(ctx, 2024, 1)
+	if err != nil {
+		t.Fatalf("YearlySummary() = %v", err)
+	}
+	if s.Income != 10000 || s.Expense != 2000 || s.Count != 2 {
+		t.Errorf("summary = income=%f expense=%f count=%d, want 10000/2000/2", s.Income, s.Expense, s.Count)
+	}
+	if s.Balance != 8000 {
+		t.Errorf("balance = %f, want 8000", s.Balance)
+	}
+	if len(s.Breakdown) == 0 {
+		t.Error("breakdown should not be empty")
+	}
+}
+
+func TestYearlySummary_NoData(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	s, err := db.YearlySummary(ctx, 2099, 1)
+	if err != nil {
+		t.Fatalf("YearlySummary() = %v", err)
+	}
+	if s.Income != 0 || s.Expense != 0 || s.Count != 0 {
+		t.Errorf("summary = income=%f expense=%f count=%d, want zeros", s.Income, s.Expense, s.Count)
+	}
+}
+
+func TestReport(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	db.Create(ctx, &models.Record{Date: "2024-03-01", Amount: 3000, Category: "工资"}, 1)
+	db.Create(ctx, &models.Record{Date: "2024-03-02", Amount: -500, Category: "餐饮"}, 1)
+	db.Create(ctx, &models.Record{Date: "2024-03-03", Amount: -200, Category: "交通"}, 1)
+
+	r, err := db.Report(ctx, "2024-03-01", "2024-03-31", 1)
+	if err != nil {
+		t.Fatalf("Report() = %v", err)
+	}
+	if r.Income != 3000 || r.Expense != 700 || r.Balance != 2300 || r.Count != 3 {
+		t.Errorf("report = income=%f expense=%f balance=%f count=%d, want 3000/700/2300/3", r.Income, r.Expense, r.Balance, r.Count)
+	}
+	if len(r.Daily) == 0 {
+		t.Error("daily breakdown should not be empty")
+	}
+	if len(r.ByCategory) == 0 {
+		t.Error("category breakdown should not be empty")
+	}
+}
+
+func TestReport_NoData(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	r, err := db.Report(ctx, "2099-01-01", "2099-12-31", 1)
+	if err != nil {
+		t.Fatalf("Report() = %v", err)
+	}
+	if r.Income != 0 || r.Expense != 0 || r.Count != 0 {
+		t.Errorf("report = income=%f expense=%f count=%d, want zeros", r.Income, r.Expense, r.Count)
+	}
+	if len(r.Daily) != 0 {
+		t.Errorf("daily = %d, want 0", len(r.Daily))
+	}
+	if len(r.ByCategory) != 0 {
+		t.Errorf("byCategory = %d, want 0", len(r.ByCategory))
+	}
+}
+
+func TestMonthlySummary_BalanceCalculation(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	db.Create(ctx, &models.Record{Date: "2024-06-01", Amount: 2000, Category: "收入"}, 1)
+	db.Create(ctx, &models.Record{Date: "2024-06-15", Amount: -800, Category: "支出"}, 1)
+
+	s, err := db.MonthlySummary(ctx, 2024, 6, 1)
+	if err != nil {
+		t.Fatalf("MonthlySummary() = %v", err)
+	}
+	if s.Balance != s.Income-s.Expense {
+		t.Errorf("balance %f != income %f - expense %f", s.Balance, s.Income, s.Expense)
+	}
+	if len(s.Breakdown) > 0 {
+		item := s.Breakdown[0]
+		if item.Balance != item.Income-item.Expense {
+			t.Errorf("breakdown balance %f != income %f - expense %f", item.Balance, item.Income, item.Expense)
+		}
 	}
 }

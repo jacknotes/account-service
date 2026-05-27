@@ -1,6 +1,7 @@
 package database
 
 import (
+	"account-service/internal/service"
 	"context"
 	"time"
 )
@@ -61,7 +62,7 @@ type OperationLog struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
-func (db *DB) ListOperationLogs(ctx context.Context, page, pageSize int, userID *int64, action string) ([]*OperationLog, int64, error) {
+func (db *DB) ListOperationLogs(ctx context.Context, page, pageSize int, userID *int64, action string) ([]*service.OperationLogEntry, int64, error) {
 	if page <= 0 {
 		page = 1
 	}
@@ -95,13 +96,35 @@ func (db *DB) ListOperationLogs(ctx context.Context, page, pageSize int, userID 
 	}
 	defer rows.Close()
 
-	var list []*OperationLog
+	var list []*service.OperationLogEntry
 	for rows.Next() {
-		var l OperationLog
-		if err := rows.Scan(&l.ID, &l.UserID, &l.Username, &l.Action, &l.TargetType, &l.TargetID, &l.Detail, &l.IP, &l.UserAgent, &l.CreatedAt); err != nil {
+		var l struct {
+			id        int64
+			userID    int64
+			username  string
+			action    string
+			targetType string
+			targetID  string
+			detail    string
+			ip        string
+			userAgent string
+			createdAt time.Time
+		}
+		if err := rows.Scan(&l.id, &l.userID, &l.username, &l.action, &l.targetType, &l.targetID, &l.detail, &l.ip, &l.userAgent, &l.createdAt); err != nil {
 			return nil, 0, err
 		}
-		list = append(list, &l)
+		list = append(list, &service.OperationLogEntry{
+			ID:         l.id,
+			UserID:     l.userID,
+			Username:   l.username,
+			Action:     l.action,
+			TargetType: l.targetType,
+			TargetID:   l.targetID,
+			Detail:     l.detail,
+			IP:         l.ip,
+			UserAgent:  l.userAgent,
+			CreatedAt:  l.createdAt.Format("2006-01-02 15:04:05"),
+		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, 0, err

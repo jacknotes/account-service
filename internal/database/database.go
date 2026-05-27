@@ -4,8 +4,11 @@ import (
 	"context"
 	"account-service/internal/models"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -23,6 +26,9 @@ func New(dbPath string) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	conn.SetMaxOpenConns(25)
+	conn.SetMaxIdleConns(5)
+	conn.SetConnMaxLifetime(5 * time.Minute)
 	db := &DB{conn: conn}
 	if err := db.migrate(); err != nil {
 		return nil, err
@@ -69,7 +75,10 @@ func (db *DB) Create(ctx context.Context, r *models.Record, userID int64) error 
 	if err != nil {
 		return err
 	}
-	id, _ := res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("failed to get last insert id: %w", err)
+	}
 	r.ID = id
 	return nil
 }
@@ -115,8 +124,8 @@ func (db *DB) List(ctx context.Context, params *models.QueryParams, userID int64
 		args = append(args, params.EndDate)
 	}
 	if params.Keyword != "" {
-		where += " AND (description LIKE ? OR category LIKE ?)"
-		kw := "%" + params.Keyword + "%"
+		where += " AND (description LIKE ? ESCAPE '\\' OR category LIKE ? ESCAPE '\\')"
+		kw := "%" + escapeLike(params.Keyword) + "%"
 		args = append(args, kw, kw)
 	}
 
@@ -152,10 +161,29 @@ func (db *DB) List(ctx context.Context, params *models.QueryParams, userID int64
 }
 
 func (db *DB) Update(ctx context.Context, id, userID int64, req *models.UpdateRecordRequest) error {
-	cur, err := db.GetByID(ctx, id, userID)
-	if err != nil || cur == nil {
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var cur models.Record
+	selQuery := `SELECT id, user_id, date, amount, category, description, created_at, updated_at FROM records WHERE id=?`
+	selArgs := []interface{}{id}
+	if userID > 0 {
+		selQuery += " AND (user_id = ? OR user_id IS NULL)"
+		selArgs = append(selArgs, userID)
+	}
+	err = tx.QueryRowContext(ctx, selQuery, selArgs...).Scan(
+		&cur.ID, &cur.UserID, &cur.Date, &cur.Amount, &cur.Category, &cur.Description, &cur.CreatedAt, &cur.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
 		return sql.ErrNoRows
 	}
+	if err != nil {
+		return err
+	}
+
 	date, amount, category, desc := cur.Date, cur.Amount, cur.Category, cur.Description
 	if req.Date != nil {
 		date = *req.Date
@@ -169,21 +197,25 @@ func (db *DB) Update(ctx context.Context, id, userID int64, req *models.UpdateRe
 	if req.Description != nil {
 		desc = *req.Description
 	}
+
 	query := "UPDATE records SET date=?, amount=?, category=?, description=?, updated_at=CURRENT_TIMESTAMP WHERE id=?"
 	args := []interface{}{date, amount, category, desc, id}
 	if userID > 0 {
 		query += " AND (user_id = ? OR user_id IS NULL)"
 		args = append(args, userID)
 	}
-	res, err := db.conn.ExecContext(ctx, query, args...)
+	res, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
 	if n == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (db *DB) Delete(ctx context.Context, id, userID int64) error {
@@ -197,9 +229,19 @@ func (db *DB) Delete(ctx context.Context, id, userID int64) error {
 	if err != nil {
 		return err
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
 	if n == 0 {
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "%", "\\%")
+	s = strings.ReplaceAll(s, "_", "\\_")
+	return s
 }
