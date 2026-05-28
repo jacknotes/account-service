@@ -1551,8 +1551,7 @@ if (btnThemeToggle) {
   btnThemeToggle.addEventListener('click', toggleTheme);
 }
 
-// 初始加载
+// 初始加载（并行请求，加速页面显示）
 initTheme();
-initUserRole()
-  .then(() => loadPage())
+Promise.all([initUserRole(), loadPage()])
   .finally(() => markAppReady());

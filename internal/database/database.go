@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
 	_ "modernc.org/sqlite"
 
 	"account-service/internal/models"
@@ -17,30 +18,97 @@ import (
 
 var ErrUnauthorized = errors.New("unauthorized: valid user ID required")
 
+const driverMySQL = "mysql"
+const driverSQLite = "sqlite"
+
 type DB struct {
-	conn *sql.DB
+	conn   *sql.DB
+	driver string
+}
+
+func isMySQLDSN(dsn string) bool {
+	return strings.Contains(dsn, "@tcp(") || strings.Contains(dsn, "@unix(")
 }
 
 func New(dbPath string) (*DB, error) {
-	dir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, err
+	var driverName string
+	var dsn string
+
+	if isMySQLDSN(dbPath) {
+		driverName = driverMySQL
+		dsn = dbPath
+	} else {
+		driverName = driverSQLite
+		dsn = dbPath
+		dir := filepath.Dir(dbPath)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return nil, err
+		}
 	}
-	conn, err := sql.Open("sqlite", dbPath)
+
+	conn, err := sql.Open(driverName, dsn)
 	if err != nil {
 		return nil, err
 	}
-	conn.SetMaxOpenConns(25)
-	conn.SetMaxIdleConns(5)
-	conn.SetConnMaxLifetime(5 * time.Minute)
-	db := &DB{conn: conn}
+
+	if driverName == driverMySQL {
+		conn.SetMaxOpenConns(50)
+		conn.SetMaxIdleConns(10)
+		conn.SetConnMaxLifetime(10 * time.Minute)
+		conn.SetConnMaxIdleTime(3 * time.Minute)
+	} else {
+		conn.SetMaxOpenConns(25)
+		conn.SetMaxIdleConns(5)
+		conn.SetConnMaxLifetime(5 * time.Minute)
+	}
+
+	db := &DB{conn: conn, driver: driverName}
 	if err := db.migrate(); err != nil {
 		return nil, err
 	}
 	return db, nil
 }
 
+func (db *DB) isMySQL() bool {
+	return db.driver == driverMySQL
+}
+
 func (db *DB) migrate() error {
+	if db.isMySQL() {
+		return db.migrateMySQL()
+	}
+	return db.migrateSQLite()
+}
+
+func (db *DB) migrateMySQL() error {
+	schema := `
+	CREATE TABLE IF NOT EXISTS records (
+		id BIGINT PRIMARY KEY AUTO_INCREMENT,
+		user_id BIGINT NOT NULL DEFAULT 0,
+		date VARCHAR(10) NOT NULL,
+		amount DECIMAL(12,2) NOT NULL,
+		category VARCHAR(64),
+		description VARCHAR(255),
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		INDEX idx_records_date (date),
+		INDEX idx_records_category (category),
+		INDEX idx_records_user (user_id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+	`
+	if _, err := db.conn.Exec(schema); err != nil {
+		return fmt.Errorf("创建 records 表失败: %w", err)
+	}
+
+	if err := db.migrateUsersMySQL(); err != nil {
+		return err
+	}
+
+	db.ignoreDuplicateColumn("ALTER TABLE records ADD COLUMN user_id BIGINT NOT NULL DEFAULT 0")
+	return nil
+}
+
+func (db *DB) migrateSQLite() error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS records (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,14 +128,28 @@ func (db *DB) migrate() error {
 	if err := db.migrateUsers(); err != nil {
 		return err
 	}
-	// 添加 user_id 列（兼容旧库，忽略已存在错误）
 	_, _ = db.conn.Exec(`ALTER TABLE records ADD COLUMN user_id INTEGER`)
 	_, _ = db.conn.Exec(`CREATE INDEX IF NOT EXISTS idx_records_user ON records(user_id)`)
 	return nil
 }
 
+func (db *DB) ignoreDuplicateColumn(stmt string) {
+	_, err := db.conn.Exec(stmt)
+	if err != nil {
+		if db.isMySQL() {
+			if strings.Contains(err.Error(), "Duplicate column name") {
+				return
+			}
+		}
+	}
+}
+
 func (db *DB) Close() error {
 	return db.conn.Close()
+}
+
+func (db *DB) Ping(ctx context.Context) error {
+	return db.conn.PingContext(ctx)
 }
 
 func requireUserID(userID int64) error {
@@ -149,14 +231,12 @@ func (db *DB) List(ctx context.Context, params *models.QueryParams, userID int64
 		args = append(args, kw, kw)
 	}
 
-	// count
 	var total int64
 	countQuery := "SELECT COUNT(*) FROM records WHERE " + where
 	if err := db.conn.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
-	// list
 	query := `SELECT id, user_id, date, amount, category, description, created_at, updated_at 
 	          FROM records WHERE ` + where + ` ORDER BY date DESC, id DESC LIMIT ? OFFSET ?`
 	args = append(args, params.PageSize, offset)

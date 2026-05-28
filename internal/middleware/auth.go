@@ -1,9 +1,12 @@
 package middleware
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
+
+	"account-service/internal/cache"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -18,6 +21,10 @@ type Claims struct {
 }
 
 func Auth(jwtSecret string) gin.HandlerFunc {
+	return AuthWithBlacklist(jwtSecret, nil)
+}
+
+func AuthWithBlacklist(jwtSecret string, redisClient *cache.RedisClient) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		auth := c.GetHeader("Authorization")
 		if auth == "" {
@@ -52,6 +59,15 @@ func Auth(jwtSecret string) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "登录已过期，请重新登录"})
 			c.Abort()
 			return
+		}
+		if redisClient != nil {
+			key := fmt.Sprintf("token_blacklist:%s", parts[1])
+			exists, err := redisClient.Exists(context.Background(), key)
+			if err == nil && exists {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "登录已过期，请重新登录"})
+				c.Abort()
+				return
+			}
 		}
 		c.Set("user_id", claims.UserID)
 		c.Set("username", claims.Username)

@@ -42,6 +42,28 @@ func (db *DB) migrateOperationLogs() error {
 	return err
 }
 
+func (db *DB) migrateOperationLogsMySQL() error {
+	schema := `
+	CREATE TABLE IF NOT EXISTS operation_logs (
+		id BIGINT PRIMARY KEY AUTO_INCREMENT,
+		user_id BIGINT NOT NULL,
+		username VARCHAR(32) NOT NULL,
+		action VARCHAR(32) NOT NULL,
+		target_type VARCHAR(32),
+		target_id VARCHAR(64),
+		detail VARCHAR(255),
+		ip VARCHAR(45),
+		user_agent VARCHAR(255),
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		INDEX idx_op_logs_user (user_id),
+		INDEX idx_op_logs_action (action),
+		INDEX idx_op_logs_created (created_at)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+	`
+	_, err := db.conn.Exec(schema)
+	return err
+}
+
 func (db *DB) LogOperation(ctx context.Context, userID int64, username, action, targetType, targetID, detail, ip, userAgent string) error {
 	_, err := db.conn.ExecContext(ctx,
 		`INSERT INTO operation_logs (user_id, username, action, target_type, target_id, detail, ip, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,

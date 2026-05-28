@@ -22,6 +22,24 @@ func (db *DB) migrateLoginLogs() error {
 	return err
 }
 
+func (db *DB) migrateLoginLogsMySQL() error {
+	schema := `
+	CREATE TABLE IF NOT EXISTS login_logs (
+		id BIGINT PRIMARY KEY AUTO_INCREMENT,
+		user_id BIGINT,
+		username VARCHAR(32) NOT NULL,
+		success TINYINT NOT NULL DEFAULT 0,
+		ip VARCHAR(45),
+		user_agent VARCHAR(255),
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		INDEX idx_login_logs_username (username),
+		INDEX idx_login_logs_created (created_at)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+	`
+	_, err := db.conn.Exec(schema)
+	return err
+}
+
 func (db *DB) LogLogin(ctx context.Context, userID *int64, username string, success bool, ip, userAgent string) error {
 	succ := 0
 	if success {

@@ -1,14 +1,17 @@
 package handlers
 
 import (
+	"account-service/internal/cache"
 	"account-service/internal/database"
 	"account-service/internal/middleware"
 	"account-service/internal/models"
 	"account-service/internal/service"
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,22 +21,20 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// totpAttempt 跟踪单个用户的 TOTP 验证尝试
-type totpAttempt struct {
-	count     int
-	blockedAt time.Time
-}
-
-// TOTPRateLimiter 限制 TOTP 验证尝试频率，防止暴力破解
 type TOTPRateLimiter struct {
 	mu       sync.Mutex
 	attempts map[int64]*totpAttempt
 	maxTries int
 	window   time.Duration
 	blockDur time.Duration
+	redis    *cache.RedisClient
 }
 
-// NewTOTPRateLimiter 创建 TOTP 速率限制器
+type totpAttempt struct {
+	count     int
+	blockedAt time.Time
+}
+
 func NewTOTPRateLimiter() *TOTPRateLimiter {
 	return &TOTPRateLimiter{
 		attempts: make(map[int64]*totpAttempt),
@@ -43,8 +44,35 @@ func NewTOTPRateLimiter() *TOTPRateLimiter {
 	}
 }
 
-// Allow 检查用户是否允许继续验证 TOTP
+func NewRedisTOTPRateLimiter(redisClient *cache.RedisClient) *TOTPRateLimiter {
+	return &TOTPRateLimiter{
+		maxTries: 5,
+		window:   5 * time.Minute,
+		blockDur: 5 * time.Minute,
+		redis:    redisClient,
+	}
+}
+
 func (rl *TOTPRateLimiter) Allow(userID int64) bool {
+	if rl.redis != nil {
+		return rl.allowRedis(userID)
+	}
+	return rl.allowMemory(userID)
+}
+
+func (rl *TOTPRateLimiter) allowRedis(userID int64) bool {
+	ctx := context.Background()
+	key := fmt.Sprintf("totp_attempts:%d", userID)
+	val, err := rl.redis.Get(ctx, key)
+	if err != nil {
+		return true
+	}
+	var count int
+	fmt.Sscanf(val, "%d", &count)
+	return count < rl.maxTries
+}
+
+func (rl *TOTPRateLimiter) allowMemory(userID int64) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	a, ok := rl.attempts[userID]
@@ -61,8 +89,27 @@ func (rl *TOTPRateLimiter) Allow(userID int64) bool {
 	return a.count < rl.maxTries
 }
 
-// RecordFailure 记录一次失败的 TOTP 验证
 func (rl *TOTPRateLimiter) RecordFailure(userID int64) {
+	if rl.redis != nil {
+		rl.recordFailureRedis(userID)
+		return
+	}
+	rl.recordFailureMemory(userID)
+}
+
+func (rl *TOTPRateLimiter) recordFailureRedis(userID int64) {
+	ctx := context.Background()
+	key := fmt.Sprintf("totp_attempts:%d", userID)
+	val, err := rl.redis.IncrWithTTL(ctx, key, rl.window)
+	if err != nil {
+		return
+	}
+	if val == 1 {
+		rl.redis.Set(ctx, key, fmt.Sprintf("%d", val), rl.window)
+	}
+}
+
+func (rl *TOTPRateLimiter) recordFailureMemory(userID int64) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	a, ok := rl.attempts[userID]
@@ -79,11 +126,34 @@ func (rl *TOTPRateLimiter) RecordFailure(userID int64) {
 	a.blockedAt = time.Now()
 }
 
-// Reset 成功验证后清除记录
 func (rl *TOTPRateLimiter) Reset(userID int64) {
+	if rl.redis != nil {
+		rl.resetRedis(userID)
+		return
+	}
+	rl.resetMemory(userID)
+}
+
+func (rl *TOTPRateLimiter) resetRedis(userID int64) {
+	ctx := context.Background()
+	key := fmt.Sprintf("totp_attempts:%d", userID)
+	rl.redis.Delete(ctx, key)
+}
+
+func (rl *TOTPRateLimiter) resetMemory(userID int64) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	delete(rl.attempts, userID)
+}
+
+func (rl *TOTPRateLimiter) cleanup(cutoff time.Time) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	for id, a := range rl.attempts {
+		if a.blockedAt.Before(cutoff) {
+			delete(rl.attempts, id)
+		}
+	}
 }
 
 type loginAttempt struct {
@@ -100,11 +170,24 @@ type AuthHandler struct {
 	loginMu        sync.Mutex
 	loginAttempts  map[string]*loginAttempt
 	quit           chan struct{}
+	redis          *cache.RedisClient
 }
 
 func NewAuthHandler(users service.UserService, ops service.OperationLogService, db *database.DB, jwtSecret string) *AuthHandler {
 	h := &AuthHandler{users: users, ops: ops, db: db, jwtSecret: jwtSecret, totpLimiter: NewTOTPRateLimiter(), loginAttempts: make(map[string]*loginAttempt), quit: make(chan struct{})}
 	go h.cleanupMaps()
+	return h
+}
+
+func NewRedisAuthHandler(users service.UserService, ops service.OperationLogService, db *database.DB, jwtSecret string, redisClient *cache.RedisClient) *AuthHandler {
+	h := &AuthHandler{
+		users:       users,
+		ops:         ops,
+		db:          db,
+		jwtSecret:   jwtSecret,
+		totpLimiter: NewRedisTOTPRateLimiter(redisClient),
+		redis:       redisClient,
+	}
 	return h
 }
 
@@ -129,17 +212,26 @@ func (h *AuthHandler) cleanupMaps() {
 	}
 }
 
-func (rl *TOTPRateLimiter) cleanup(cutoff time.Time) {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	for id, a := range rl.attempts {
-		if a.blockedAt.Before(cutoff) {
-			delete(rl.attempts, id)
-		}
+func (h *AuthHandler) checkLoginLock(username string) (locked bool) {
+	if h.redis != nil {
+		return h.checkLoginLockRedis(username)
 	}
+	return h.checkLoginLockMemory(username)
 }
 
-func (h *AuthHandler) checkLoginLock(username string) (locked bool) {
+func (h *AuthHandler) checkLoginLockRedis(username string) bool {
+	ctx := context.Background()
+	key := fmt.Sprintf("login_attempts:%s", username)
+	val, err := h.redis.Get(ctx, key)
+	if err != nil {
+		return false
+	}
+	var count int
+	fmt.Sscanf(val, "%d", &count)
+	return count >= 5
+}
+
+func (h *AuthHandler) checkLoginLockMemory(username string) bool {
 	h.loginMu.Lock()
 	defer h.loginMu.Unlock()
 	a, ok := h.loginAttempts[username]
@@ -156,6 +248,20 @@ func (h *AuthHandler) checkLoginLock(username string) (locked bool) {
 }
 
 func (h *AuthHandler) recordLoginFailure(username string) {
+	if h.redis != nil {
+		h.recordLoginFailureRedis(username)
+		return
+	}
+	h.recordLoginFailureMemory(username)
+}
+
+func (h *AuthHandler) recordLoginFailureRedis(username string) {
+	ctx := context.Background()
+	key := fmt.Sprintf("login_attempts:%s", username)
+	h.redis.IncrWithTTL(ctx, key, 5*time.Minute)
+}
+
+func (h *AuthHandler) recordLoginFailureMemory(username string) {
 	h.loginMu.Lock()
 	defer h.loginMu.Unlock()
 	a, ok := h.loginAttempts[username]
@@ -173,12 +279,25 @@ func (h *AuthHandler) recordLoginFailure(username string) {
 }
 
 func (h *AuthHandler) resetLoginAttempts(username string) {
+	if h.redis != nil {
+		h.resetLoginAttemptsRedis(username)
+		return
+	}
+	h.resetLoginAttemptsMemory(username)
+}
+
+func (h *AuthHandler) resetLoginAttemptsRedis(username string) {
+	ctx := context.Background()
+	key := fmt.Sprintf("login_attempts:%s", username)
+	h.redis.Delete(ctx, key)
+}
+
+func (h *AuthHandler) resetLoginAttemptsMemory(username string) {
 	h.loginMu.Lock()
 	defer h.loginMu.Unlock()
 	delete(h.loginAttempts, username)
 }
 
-// RegisterStatus 查询是否允许注册（无用户时可注册）
 func (h *AuthHandler) RegisterStatus(c *gin.Context) {
 	n, err := h.users.UserCount(c.Request.Context())
 	if err != nil {
@@ -398,7 +517,6 @@ func (h *AuthHandler) TOTPEnable(c *gin.Context) {
 	respondOK(c, gin.H{"message": "TOTP 已启用"})
 }
 
-// ChangePassword 修改密码
 func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	ctx := c.Request.Context()
 	userID := middleware.GetUserID(c)
@@ -436,13 +554,13 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 		respondServerError(c)
 		return
 	}
+	h.revokeToken(c)
 	if err := h.ops.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpChangePwd, "user", "", "修改自己的密码", c.ClientIP(), c.GetHeader("User-Agent")); err != nil {
 		slog.Warn("audit log failed", "error", err, "action", "change_password")
 	}
 	respondOK(c, gin.H{"message": "密码已修改"})
 }
 
-// AddUser 添加用户（需登录）
 func (h *AuthHandler) AddUser(c *gin.Context) {
 	ctx := c.Request.Context()
 	var req models.RegisterRequest
@@ -610,4 +728,36 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		"refresh_token": newRefresh,
 		"user":          gin.H{"id": u.ID, "username": u.Username, "role": u.Role, "totp_enabled": u.TOTPSecret != ""},
 	})
+}
+
+func (h *AuthHandler) revokeToken(c *gin.Context) {
+	if h.redis == nil {
+		return
+	}
+	auth := c.GetHeader("Authorization")
+	if auth == "" {
+		return
+	}
+	parts := strings.SplitN(auth, " ", 2)
+	if len(parts) != 2 {
+		return
+	}
+	tokenStr := parts[1]
+	token, err := jwt.ParseWithClaims(tokenStr, &middleware.Claims{}, func(t *jwt.Token) (interface{}, error) {
+		return []byte(h.jwtSecret), nil
+	})
+	if err != nil || !token.Valid {
+		return
+	}
+	claims, ok := token.Claims.(*middleware.Claims)
+	if !ok {
+		return
+	}
+	ttl := time.Until(claims.ExpiresAt.Time)
+	if ttl <= 0 {
+		return
+	}
+	ctx := c.Request.Context()
+	key := fmt.Sprintf("token_blacklist:%s", tokenStr)
+	h.redis.Set(ctx, key, "1", ttl)
 }

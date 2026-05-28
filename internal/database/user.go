@@ -29,6 +29,28 @@ func (db *DB) migrateUsers() error {
 	return db.migrateOperationLogs()
 }
 
+func (db *DB) migrateUsersMySQL() error {
+	schema := `
+	CREATE TABLE IF NOT EXISTS users (
+		id BIGINT PRIMARY KEY AUTO_INCREMENT,
+		username VARCHAR(32) UNIQUE NOT NULL,
+		password_hash VARCHAR(255) NOT NULL,
+		totp_secret VARCHAR(255) DEFAULT '',
+		role VARCHAR(16) DEFAULT 'user',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		INDEX idx_users_username (username)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+	`
+	if _, err := db.conn.Exec(schema); err != nil {
+		return fmt.Errorf("创建 users 表失败: %w", err)
+	}
+
+	if err := db.migrateLoginLogsMySQL(); err != nil {
+		return err
+	}
+	return db.migrateOperationLogsMySQL()
+}
+
 func (db *DB) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
 	var u models.User
 	err := db.conn.QueryRowContext(ctx,

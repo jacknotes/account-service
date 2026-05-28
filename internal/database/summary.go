@@ -144,10 +144,11 @@ func (db *DB) YearlySummary(ctx context.Context, year int, userID int64) (*model
 		Balance: income - expense,
 		Count:   cnt,
 	}
-	// 按月分项
+
+	monthFunc := db.dateTruncExpr()
 	bkArgs := append([]interface{}{start, end}, uidArgs...)
 	rows, err := db.conn.QueryContext(ctx, `
-		SELECT strftime('%Y-%m', date) as month,
+		SELECT `+monthFunc+` as month,
 			COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0),
 			COALESCE(ABS(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END)), 0),
 			COUNT(*)
@@ -221,9 +222,10 @@ func (db *DB) Report(ctx context.Context, startDate, endDate string, userID int6
 	}
 
 	// 按月
+	monthFunc := db.dateTruncExpr()
 	monthArgs := append([]interface{}{startDate, endDate}, uidArgs...)
 	monthRows, err := db.conn.QueryContext(ctx, `
-		SELECT strftime('%Y-%m', date) as month,
+		SELECT `+monthFunc+` as month,
 			COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0),
 			COALESCE(ABS(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END)), 0),
 			COUNT(*)
@@ -298,4 +300,11 @@ func daysInMonth(year, month int) int {
 		return 29
 	}
 	return days[month-1]
+}
+
+func (db *DB) dateTruncExpr() string {
+	if db.isMySQL() {
+		return "DATE_FORMAT(date, '%Y-%m')"
+	}
+	return "strftime('%Y-%m', date)"
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"account-service/config"
+	"account-service/internal/cache"
 	"account-service/internal/database"
 	"account-service/internal/handlers"
 	"account-service/internal/middleware"
@@ -23,16 +24,37 @@ func main() {
 		slog.Error("配置加载失败", "error", err)
 		os.Exit(1)
 	}
-	db, err := database.New(cfg.Database)
+
+	if mode := os.Getenv("GIN_MODE"); mode == "" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	dbDSN := cfg.Database
+	if cfg.MySQLDSN != "" {
+		dbDSN = cfg.MySQLDSN
+	}
+	db, err := database.New(dbDSN)
 	if err != nil {
 		slog.Error("数据库初始化失败", "error", err)
 		os.Exit(1)
 	}
 	defer db.Close()
 
-	r := gin.Default()
+	var redisClient *cache.RedisClient
+	if cfg.RedisAddr != "" {
+		rc, err := cache.NewRedisClient(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
+		if err != nil {
+			slog.Warn("Redis 连接失败，使用本地内存模式", "error", err)
+		} else {
+			redisClient = rc
+			defer redisClient.Close()
+			slog.Info("Redis 连接成功", "addr", cfg.RedisAddr)
+		}
+	}
 
-	// CORS 跨域
+	r := gin.Default()
+	r.SetTrustedProxies(nil)
+
 	r.Use(func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
 		if cfg.AllowedOrigins == "*" {
@@ -55,30 +77,42 @@ func main() {
 		c.Next()
 	})
 
-	// Rate limiter
-	loginLimiter := middleware.NewRateLimiter(1, 3) // 降 burst: 5→3
+	var loginLimiter, globalLimiter *middleware.RateLimiter
+	if redisClient != nil {
+		loginLimiter = middleware.NewRedisRateLimiter(1, 3, redisClient)
+		globalLimiter = middleware.NewRedisRateLimiter(10, 30, redisClient)
+	} else {
+		loginLimiter = middleware.NewRateLimiter(1, 3)
+		globalLimiter = middleware.NewRateLimiter(10, 30)
+	}
 	defer loginLimiter.Stop()
-	globalLimiter := middleware.NewRateLimiter(10, 30)
 	defer globalLimiter.Stop()
 
 	api := r.Group("/api")
 	api.Use(globalLimiter.Limit())
-	authHandler := handlers.NewAuthHandler(db, db, db, cfg.JWTSecret)
 
-	// 无需认证
+	var authHandler *handlers.AuthHandler
+	if redisClient != nil {
+		authHandler = handlers.NewRedisAuthHandler(db, db, db, cfg.JWTSecret, redisClient)
+	} else {
+		authHandler = handlers.NewAuthHandler(db, db, db, cfg.JWTSecret)
+	}
+
 	api.GET("/auth/register/status", authHandler.RegisterStatus)
 	api.POST("/auth/login", loginLimiter.Limit(), authHandler.Login)
 	api.POST("/auth/register", loginLimiter.Limit(), authHandler.Register)
 	api.POST("/auth/refresh", loginLimiter.Limit(), authHandler.Refresh)
 
-	// 需要认证
 	auth := api.Group("")
-	auth.Use(middleware.Auth(cfg.JWTSecret))
+	if redisClient != nil {
+		auth.Use(middleware.AuthWithBlacklist(cfg.JWTSecret, redisClient))
+	} else {
+		auth.Use(middleware.Auth(cfg.JWTSecret))
+	}
 	{
 		auth.GET("/auth/me", authHandler.Me)
 		auth.POST("/auth/change-password", authHandler.ChangePassword)
 		auth.GET("/auth/totp/setup", authHandler.TOTPSetup)
-		// 管理员用户管理
 		admin := auth.Group("")
 		admin.Use(middleware.RequireAdmin())
 		{
@@ -106,11 +140,34 @@ func main() {
 		auth.GET("/report", summaryHandler.Report)
 	}
 
-	// 健康检查
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
-	r.GET("/readyz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
+	r.GET("/readyz", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
 
-	// 前端静态文件（放 /app 下避免与 /api 路由冲突）
+		status := gin.H{"status": "ok", "mysql": "ok", "redis": "ok"}
+
+		if err := db.Ping(ctx); err != nil {
+			status["mysql"] = "error: " + err.Error()
+			status["status"] = "not ready"
+		}
+
+		if redisClient != nil {
+			if err := redisClient.Ping(ctx); err != nil {
+				status["redis"] = "error: " + err.Error()
+				status["status"] = "not ready"
+			}
+		} else {
+			status["redis"] = "未配置"
+		}
+
+		code := 200
+		if status["status"] != "ok" {
+			code = 503
+		}
+		c.JSON(code, status)
+	})
+
 	r.Static("/app", cfg.Frontend)
 	r.GET("/", func(c *gin.Context) { c.Redirect(302, "/app/login.html") })
 

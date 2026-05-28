@@ -1,14 +1,96 @@
 services:
+  # MySQL 5.7 数据库
+  mysql:
+    image: mysql:5.7
+    container_name: account-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123456}
+      MYSQL_DATABASE: account_service
+      MYSQL_USER: ${MYSQL_USER:-account}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-account123456}
+      TZ: Asia/Shanghai
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./scripts/init-mysql.sql:/docker-entrypoint-initdb.d/init.sql
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb-buffer-pool-size=256M
+      - --max-connections=200
+      - --slow-query-log=ON
+      - --long-query-time=2
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root123456}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - account-net
+
+  # Redis 5 缓存
+  redis:
+    image: redis:5-alpine
+    container_name: account-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - account-net
+
+  # 应用服务（支持多实例）
   account-service:
-    #build: .
+    build: .
     image: jacknotes/account-service:latest
     ports:
       - "8081:8081"
-    volumes:
-      - ./data:/app/data
     environment:
       - PORT=8081
-      - DATABASE_PATH=/app/data/accounting.db
-      # 生产环境请通过 .env 或 -e 覆盖，勿使用默认值
+      - GIN_MODE=release
+      # MySQL 连接配置
+      - MYSQL_DSN=${MYSQL_USER:-account}:${MYSQL_PASSWORD:-account123456}@tcp(mysql:3306)/account_service?charset=utf8mb4&parseTime=True&loc=Local
+      # Redis 连接配置
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_DB=0
+      # JWT 密钥（生产环境必须修改）
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET 必须设置，至少 32 位随机字符串}
+      # CORS 配置
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
+    networks:
+      - account-net
+
+# 数据卷
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+
+# 网络
+networks:
+  account-net:
+    driver: bridge

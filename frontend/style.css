@@ -39,7 +39,25 @@ body {
 }
 
 body.app-initializing .app {
-  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+body.app-initializing .app::before {
+  content: '加载中...';
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 18px;
+  color: var(--text-muted, #999);
+  z-index: 9999;
+  opacity: 1;
+}
+
+.app {
+  opacity: 1;
+  transition: opacity 0.3s ease;
 }
 
 .app {
