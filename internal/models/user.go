@@ -26,6 +26,3 @@ type RegisterRequest struct {
 	Role     string `json:"role"` // 添加用户时可指定，admin 或 user
 }
 
-type ChangePasswordRequest struct {
-	Password string `json:"password" binding:"required"`
-}

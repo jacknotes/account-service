@@ -2,8 +2,8 @@ package database
 
 import (
 	"context"
-	"account-service/internal/models"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +11,11 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"account-service/internal/models"
 )
+
+var ErrUnauthorized = errors.New("unauthorized: valid user ID required")
 
 type DB struct {
 	conn *sql.DB
@@ -66,7 +70,17 @@ func (db *DB) Close() error {
 	return db.conn.Close()
 }
 
+func requireUserID(userID int64) error {
+	if userID <= 0 {
+		return ErrUnauthorized
+	}
+	return nil
+}
+
 func (db *DB) Create(ctx context.Context, r *models.Record, userID int64) error {
+	if err := requireUserID(userID); err != nil {
+		return err
+	}
 	r.UserID = userID
 	res, err := db.conn.ExecContext(ctx,
 		`INSERT INTO records (user_id, date, amount, category, description) VALUES (?, ?, ?, ?, ?)`,
@@ -84,6 +98,9 @@ func (db *DB) Create(ctx context.Context, r *models.Record, userID int64) error 
 }
 
 func (db *DB) GetByID(ctx context.Context, id, userID int64) (*models.Record, error) {
+	if err := requireUserID(userID); err != nil {
+		return nil, err
+	}
 	var r models.Record
 	query := `SELECT id, user_id, date, amount, category, description, created_at, updated_at 
 	          FROM records WHERE id = ?`
@@ -105,6 +122,9 @@ func (db *DB) GetByID(ctx context.Context, id, userID int64) (*models.Record, er
 }
 
 func (db *DB) List(ctx context.Context, params *models.QueryParams, userID int64) ([]*models.Record, int64, error) {
+	if err := requireUserID(userID); err != nil {
+		return nil, 0, err
+	}
 	params.Normalize()
 	offset := (params.Page - 1) * params.PageSize
 
@@ -161,6 +181,9 @@ func (db *DB) List(ctx context.Context, params *models.QueryParams, userID int64
 }
 
 func (db *DB) Update(ctx context.Context, id, userID int64, req *models.UpdateRecordRequest) error {
+	if err := requireUserID(userID); err != nil {
+		return err
+	}
 	tx, err := db.conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -219,6 +242,9 @@ func (db *DB) Update(ctx context.Context, id, userID int64, req *models.UpdateRe
 }
 
 func (db *DB) Delete(ctx context.Context, id, userID int64) error {
+	if err := requireUserID(userID); err != nil {
+		return err
+	}
 	query := "DELETE FROM records WHERE id=?"
 	args := []interface{}{id}
 	if userID > 0 {

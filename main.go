@@ -141,13 +141,6 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		slog.Error("服务关闭异常，强制关闭", "error", err)
 	}
-	// 超时后强制关闭活跃连接
-	closeCtx, closeCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer closeCancel()
-	if err := srv.Close(); err != nil {
-		slog.Error("强制关闭连接异常", "error", err)
-	}
-	<-closeCtx.Done()
 
 	slog.Info("服务已安全关闭")
 }

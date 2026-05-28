@@ -29,6 +29,7 @@ type SummaryService interface {
 // UserService defines database operations for user management.
 type UserService interface {
 	CreateUser(ctx context.Context, u *models.User, passwordHash string) error
+	CreateFirstUser(ctx context.Context, u *models.User, passwordHash string) error
 	GetUserByID(ctx context.Context, id int64) (*models.User, error)
 	GetUserByUsername(ctx context.Context, username string) (*models.User, error)
 	UpdateUserPassword(ctx context.Context, id int64, passwordHash string) error
@@ -52,6 +53,7 @@ type OperationLogEntry struct {
 	UserID     int64  `json:"user_id"`
 	Username   string `json:"username"`
 	Action     string `json:"action"`
+	ActionName string `json:"action_name"`
 	TargetType string `json:"target_type"`
 	TargetID   string `json:"target_id"`
 	Detail     string `json:"detail"`

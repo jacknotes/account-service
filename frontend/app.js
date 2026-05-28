@@ -831,7 +831,7 @@ function renderLogsTable(list = []) {
       <tr>
         <td>${esc(l.created_at ? l.created_at.slice(0, 19).replace('T', ' ') : '-')}</td>
         <td>${esc(l.username)}</td>
-        <td>${esc(l.action)}</td>
+        <td>${esc(l.action_name || l.action)}</td>
         <td>${esc(l.detail || '-')}</td>
         <td>${esc(l.ip || '-')}</td>
       </tr>

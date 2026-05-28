@@ -10,7 +10,7 @@ import (
 )
 
 type Claims struct {
-	UserID   int64  `json:"uid"`
+	UserID   int64  `json:"user_id"`
 	Username string `json:"username"`
 	Role     string `json:"role"`
 	Type     string `json:"type"`

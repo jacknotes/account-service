@@ -296,7 +296,7 @@ func TestAuthHandler_RegisterAndLogin(t *testing.T) {
 	// Register
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("POST", "/api/auth/register", strings.NewReader(`{"username":"admin","password":"admin123"}`))
+	c.Request = httptest.NewRequest("POST", "/api/auth/register", strings.NewReader(`{"username":"admin","password":"Admin@123"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	h.Register(c)
@@ -308,7 +308,7 @@ func TestAuthHandler_RegisterAndLogin(t *testing.T) {
 	// Login
 	w2 := httptest.NewRecorder()
 	c2, _ := gin.CreateTestContext(w2)
-	c2.Request = httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"admin123"}`))
+	c2.Request = httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"Admin@123"}`))
 	c2.Request.Header.Set("Content-Type", "application/json")
 
 	h.Login(c2)

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 )
@@ -61,6 +62,7 @@ func getDuration(key string, def time.Duration) time.Duration {
 		if err == nil {
 			return d
 		}
+		slog.Warn("环境变量解析失败，使用默认值", "key", key, "value", v, "error", err)
 	}
 	return def
 }

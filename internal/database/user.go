@@ -2,9 +2,10 @@ package database
 
 import (
 	"context"
-	"account-service/internal/models"
 	"database/sql"
 	"fmt"
+
+	"account-service/internal/models"
 )
 
 func (db *DB) migrateUsers() error {
@@ -86,6 +87,44 @@ func (db *DB) UpdateUserPassword(ctx context.Context, id int64, passwordHash str
 func (db *DB) SetTOTPSecret(ctx context.Context, id int64, secret string) error {
 	_, err := db.conn.ExecContext(ctx, `UPDATE users SET totp_secret = ? WHERE id = ?`, secret, id)
 	return err
+}
+
+// CreateFirstUser atomically checks that no users exist and inserts the first
+// user as admin.  The check and insert run inside a single transaction so that
+// two concurrent registrations cannot both succeed (eliminates the TOCTOU race).
+// Returns an error if a user already exists or on any database failure.
+func (db *DB) CreateFirstUser(ctx context.Context, u *models.User, passwordHash string) error {
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
+		return fmt.Errorf("count users: %w", err)
+	}
+	if n > 0 {
+		return fmt.Errorf("users already exist")
+	}
+
+	role := u.Role
+	if role == "" {
+		role = models.RoleUser
+	}
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO users (username, role, password_hash, totp_secret) VALUES (?, ?, ?, ?)`,
+		u.Username, role, passwordHash, u.TOTPSecret,
+	)
+	if err != nil {
+		return err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("failed to get last insert id: %w", err)
+	}
+	u.ID = id
+	return tx.Commit()
 }
 
 func (db *DB) UserCount(ctx context.Context) (int, error) {

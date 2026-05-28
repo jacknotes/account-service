@@ -2,9 +2,10 @@ package database
 
 import (
 	"context"
-	"account-service/internal/models"
 	"database/sql"
 	"fmt"
+
+	"account-service/internal/models"
 )
 
 
@@ -37,6 +38,9 @@ func userIDClause(userID int64) (string, []interface{}) {
 
 // DailySummary 某日汇总
 func (db *DB) DailySummary(ctx context.Context, date string, userID int64) (*models.Summary, error) {
+	if err := requireUserID(userID); err != nil {
+		return nil, err
+	}
 	uidClause, uidArgs := userIDClause(userID)
 	income, expense, cnt, err := db.summaryAggRow(ctx, "date = ?"+uidClause, append([]interface{}{date}, uidArgs...))
 	if err != nil {
@@ -73,6 +77,9 @@ func (db *DB) DailySummary(ctx context.Context, date string, userID int64) (*mod
 
 // MonthlySummary 某月汇总
 func (db *DB) MonthlySummary(ctx context.Context, year, month int, userID int64) (*models.Summary, error) {
+	if err := requireUserID(userID); err != nil {
+		return nil, err
+	}
 	start := fmtDate(year, month, 1)
 	end := fmtDate(year, month, daysInMonth(year, month))
 
@@ -120,6 +127,9 @@ func (db *DB) MonthlySummary(ctx context.Context, year, month int, userID int64)
 
 // YearlySummary 某年汇总
 func (db *DB) YearlySummary(ctx context.Context, year int, userID int64) (*models.Summary, error) {
+	if err := requireUserID(userID); err != nil {
+		return nil, err
+	}
 	start := fmtDate(year, 1, 1)
 	end := fmtDate(year, 12, 31)
 
@@ -167,6 +177,9 @@ func (db *DB) YearlySummary(ctx context.Context, year int, userID int64) (*model
 
 // Report 报表：指定日期范围内的汇总及分项
 func (db *DB) Report(ctx context.Context, startDate, endDate string, userID int64) (*models.Report, error) {
+	if err := requireUserID(userID); err != nil {
+		return nil, err
+	}
 	r := &models.Report{StartDate: startDate, EndDate: endDate}
 
 	uidClause, uidArgs := userIDClause(userID)
@@ -205,6 +218,35 @@ func (db *DB) Report(ctx context.Context, startDate, endDate string, userID int6
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate daily breakdown: %w", err)
+	}
+
+	// 按月
+	monthArgs := append([]interface{}{startDate, endDate}, uidArgs...)
+	monthRows, err := db.conn.QueryContext(ctx, `
+		SELECT strftime('%Y-%m', date) as month,
+			COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0),
+			COALESCE(ABS(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END)), 0),
+			COUNT(*)
+		FROM records WHERE date >= ? AND date <= ?`+uidClause+`
+		GROUP BY month ORDER BY month
+	`, monthArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer monthRows.Close()
+	for monthRows.Next() {
+		var item models.BreakdownItem
+		var inc, exp sql.NullFloat64
+		if err := monthRows.Scan(&item.Period, &inc, &exp, &item.Count); err != nil {
+			return nil, fmt.Errorf("scan monthly breakdown: %w", err)
+		}
+		item.Income = floatVal(inc)
+		item.Expense = floatVal(exp)
+		item.Balance = item.Income - item.Expense
+		r.Monthly = append(r.Monthly, &item)
+	}
+	if err := monthRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate monthly breakdown: %w", err)
 	}
 
 	// 按分类

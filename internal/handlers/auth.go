@@ -6,6 +6,7 @@ import (
 	"account-service/internal/models"
 	"account-service/internal/service"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"sync"
@@ -203,19 +204,25 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 	if h.checkLoginLock(req.Username) {
-		_ = h.ops.LogLogin(ctx, nil, req.Username, false, ip, ua)
+		if err := h.ops.LogLogin(ctx, nil, req.Username, false, ip, ua); err != nil {
+			slog.Warn("audit log failed", "error", err, "action", "login")
+		}
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "登录尝试过于频繁，请稍后再试"})
 		return
 	}
 	u, err := h.users.GetUserByUsername(ctx, req.Username)
 	if err != nil || u == nil {
-		_ = h.ops.LogLogin(ctx, nil, req.Username, false, ip, ua)
+		if err := h.ops.LogLogin(ctx, nil, req.Username, false, ip, ua); err != nil {
+			slog.Warn("audit log failed", "error", err, "action", "login")
+		}
 		h.recordLoginFailure(req.Username)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户名或密码错误"})
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.Password)); err != nil {
-		_ = h.ops.LogLogin(ctx, &u.ID, req.Username, false, ip, ua)
+		if err := h.ops.LogLogin(ctx, &u.ID, req.Username, false, ip, ua); err != nil {
+			slog.Warn("audit log failed", "error", err, "action", "login")
+		}
 		h.recordLoginFailure(req.Username)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户名或密码错误"})
 		return
@@ -230,13 +237,17 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			return
 		}
 		if !h.totpLimiter.Allow(u.ID) {
-			_ = h.ops.LogLogin(ctx, &u.ID, req.Username, false, ip, ua)
+			if err := h.ops.LogLogin(ctx, &u.ID, req.Username, false, ip, ua); err != nil {
+				slog.Warn("audit log failed", "error", err, "action", "login")
+			}
 			respondBadRequest(c, "TOTP 验证尝试过于频繁，请稍后再试")
 			return
 		}
 		if !totp.Validate(req.TOTPCode, u.TOTPSecret) {
 			h.totpLimiter.RecordFailure(u.ID)
-			_ = h.ops.LogLogin(ctx, &u.ID, req.Username, false, ip, ua)
+			if err := h.ops.LogLogin(ctx, &u.ID, req.Username, false, ip, ua); err != nil {
+				slog.Warn("audit log failed", "error", err, "action", "login")
+			}
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "TOTP 验证码错误"})
 			return
 		}
@@ -252,8 +263,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		respondServerError(c)
 		return
 	}
-	_ = h.ops.LogLogin(ctx, &u.ID, req.Username, true, ip, ua)
-	_ = h.ops.LogOperation(ctx, u.ID, u.Username, service.OpLogin, "", "", "登录成功", ip, ua)
+	if err := h.ops.LogLogin(ctx, &u.ID, req.Username, true, ip, ua); err != nil {
+		slog.Warn("audit log failed", "error", err, "action", "login")
+	}
+	if err := h.ops.LogOperation(ctx, u.ID, u.Username, service.OpLogin, "", "", "登录成功", ip, ua); err != nil {
+		slog.Warn("audit log failed", "error", err, "action", "login")
+	}
 	respondOK(c, gin.H{
 		"token":         token,
 		"refresh_token": refreshToken,
@@ -263,11 +278,6 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 func (h *AuthHandler) Register(c *gin.Context) {
 	ctx := c.Request.Context()
-	n, err := h.users.UserCount(ctx)
-	if err != nil || n > 0 {
-		c.JSON(http.StatusForbidden, gin.H{"error": "注册已关闭"})
-		return
-	}
 	var req models.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondBadRequest(c, "请求参数错误")
@@ -277,17 +287,23 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		respondBadRequest(c, "用户名长度须在 2~32 位之间")
 		return
 	}
+	if err := validatePasswordStrength(req.Password); err != nil {
+		respondBadRequest(c, err.Error())
+		return
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		respondServerError(c)
 		return
 	}
 	u := &models.User{Username: req.Username, Role: models.RoleAdmin}
-	if err := h.users.CreateUser(ctx, u, string(hash)); err != nil {
-		respondBadRequest(c, "用户名已存在")
+	if err := h.users.CreateFirstUser(ctx, u, string(hash)); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "注册已关闭"})
 		return
 	}
-	_ = h.ops.LogOperation(ctx, u.ID, u.Username, service.OpAddUser, "user", strconv.FormatInt(u.ID, 10), "首次注册", c.ClientIP(), c.GetHeader("User-Agent"))
+	if err := h.ops.LogOperation(ctx, u.ID, u.Username, service.OpAddUser, "user", strconv.FormatInt(u.ID, 10), "首次注册", c.ClientIP(), c.GetHeader("User-Agent")); err != nil {
+		slog.Warn("audit log failed", "error", err, "action", "add_user")
+	}
 	token, err := h.issueToken(u.ID, u.Username, u.Role)
 	if err != nil {
 		respondServerError(c)
@@ -376,7 +392,9 @@ func (h *AuthHandler) TOTPEnable(c *gin.Context) {
 		respondServerError(c)
 		return
 	}
-	_ = h.ops.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpTOTPEnable, "", "", "", c.ClientIP(), c.GetHeader("User-Agent"))
+	if err := h.ops.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpTOTPEnable, "", "", "", c.ClientIP(), c.GetHeader("User-Agent")); err != nil {
+		slog.Warn("audit log failed", "error", err, "action", "totp_enable")
+	}
 	respondOK(c, gin.H{"message": "TOTP 已启用"})
 }
 
@@ -392,8 +410,8 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 		respondBadRequest(c, "请求参数错误")
 		return
 	}
-	if len(req.NewPassword) < 6 {
-		respondBadRequest(c, "新密码至少 6 位")
+	if err := validatePasswordStrength(req.NewPassword); err != nil {
+		respondBadRequest(c, err.Error())
 		return
 	}
 	u, err := h.users.GetUserByID(ctx, userID)
@@ -418,7 +436,9 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 		respondServerError(c)
 		return
 	}
-	_ = h.ops.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpChangePwd, "user", "", "修改自己的密码", c.ClientIP(), c.GetHeader("User-Agent"))
+	if err := h.ops.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpChangePwd, "user", "", "修改自己的密码", c.ClientIP(), c.GetHeader("User-Agent")); err != nil {
+		slog.Warn("audit log failed", "error", err, "action", "change_password")
+	}
 	respondOK(c, gin.H{"message": "密码已修改"})
 }
 
@@ -434,8 +454,8 @@ func (h *AuthHandler) AddUser(c *gin.Context) {
 		respondBadRequest(c, "用户名长度须在 2~32 位之间")
 		return
 	}
-	if len(req.Password) < 6 {
-		respondBadRequest(c, "密码至少 6 位")
+	if err := validatePasswordStrength(req.Password); err != nil {
+		respondBadRequest(c, err.Error())
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
@@ -453,7 +473,9 @@ func (h *AuthHandler) AddUser(c *gin.Context) {
 		return
 	}
 	operatorID := middleware.GetUserID(c)
-	_ = h.ops.LogOperation(ctx, operatorID, middleware.GetUsername(c), service.OpAddUser, "user", strconv.FormatInt(u.ID, 10), "添加用户:"+u.Username, c.ClientIP(), c.GetHeader("User-Agent"))
+	if err := h.ops.LogOperation(ctx, operatorID, middleware.GetUsername(c), service.OpAddUser, "user", strconv.FormatInt(u.ID, 10), "添加用户:"+u.Username, c.ClientIP(), c.GetHeader("User-Agent")); err != nil {
+		slog.Warn("audit log failed", "error", err, "action", "add_user")
+	}
 	respondCreated(c, gin.H{"message": "用户已添加", "id": u.ID, "username": u.Username})
 }
 
@@ -495,7 +517,9 @@ func (h *AuthHandler) TOTPDisable(c *gin.Context) {
 		respondServerError(c)
 		return
 	}
-	_ = h.ops.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpTOTPDisable, "", "", "", c.ClientIP(), c.GetHeader("User-Agent"))
+	if err := h.ops.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpTOTPDisable, "", "", "", c.ClientIP(), c.GetHeader("User-Agent")); err != nil {
+		slog.Warn("audit log failed", "error", err, "action", "totp_disable")
+	}
 	respondOK(c, gin.H{"message": "TOTP 已关闭"})
 }
 

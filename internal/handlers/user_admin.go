@@ -6,6 +6,7 @@ import (
 	"account-service/internal/service"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -86,7 +87,9 @@ func (h *AuthHandler) UpdateUser(c *gin.Context) {
 		respondBadRequest(c, "用户名已存在")
 		return
 	}
-	_ = h.ops.LogOperation(ctx, curUserID, middleware.GetUsername(c), service.OpUpdateUser, "user", strconv.FormatInt(id, 10), "更新用户:"+req.Username, c.ClientIP(), c.GetHeader("User-Agent"))
+	if err := h.ops.LogOperation(ctx, curUserID, middleware.GetUsername(c), service.OpUpdateUser, "user", strconv.FormatInt(id, 10), "更新用户:"+req.Username, c.ClientIP(), c.GetHeader("User-Agent")); err != nil {
+		slog.Warn("audit log failed", "error", err, "action", "update_user")
+	}
 	respondOK(c, gin.H{"message": "已更新"})
 }
 
@@ -120,7 +123,9 @@ func (h *AuthHandler) DeleteUser(c *gin.Context) {
 		respondNotFound(c, "用户")
 		return
 	}
-	_ = h.ops.LogOperation(ctx, curUserID, middleware.GetUsername(c), service.OpDeleteUser, "user", strconv.FormatInt(id, 10), "删除用户:"+u.Username, c.ClientIP(), c.GetHeader("User-Agent"))
+	if err := h.ops.LogOperation(ctx, curUserID, middleware.GetUsername(c), service.OpDeleteUser, "user", strconv.FormatInt(id, 10), "删除用户:"+u.Username, c.ClientIP(), c.GetHeader("User-Agent")); err != nil {
+		slog.Warn("audit log failed", "error", err, "action", "delete_user")
+	}
 	respondOK(c, gin.H{"message": "已删除"})
 }
 
@@ -139,8 +144,8 @@ func (h *AuthHandler) AdminChangeUserPassword(c *gin.Context) {
 		respondBadRequest(c, "请求参数错误")
 		return
 	}
-	if len(req.Password) < 6 {
-		respondBadRequest(c, "密码至少 6 位")
+	if err := validatePasswordStrength(req.Password); err != nil {
+		respondBadRequest(c, err.Error())
 		return
 	}
 	u, err := h.users.GetUserByID(ctx, id)
@@ -162,7 +167,9 @@ func (h *AuthHandler) AdminChangeUserPassword(c *gin.Context) {
 		return
 	}
 	operatorID := middleware.GetUserID(c)
-	_ = h.ops.LogOperation(ctx, operatorID, middleware.GetUsername(c), service.OpChangePwd, "user", strconv.FormatInt(id, 10), "管理员修改用户"+u.Username+"的密码", c.ClientIP(), c.GetHeader("User-Agent"))
+	if err := h.ops.LogOperation(ctx, operatorID, middleware.GetUsername(c), service.OpChangePwd, "user", strconv.FormatInt(id, 10), "管理员修改用户"+u.Username+"的密码", c.ClientIP(), c.GetHeader("User-Agent")); err != nil {
+		slog.Warn("audit log failed", "error", err, "action", "change_password")
+	}
 	respondOK(c, gin.H{"message": "密码已修改"})
 }
 
@@ -184,7 +191,7 @@ func (h *AuthHandler) ListOperationLogs(c *gin.Context) {
 	}
 	for _, l := range list {
 		if name, ok := actionNameMap[l.Action]; ok {
-			l.Action = name
+			l.ActionName = name
 		}
 	}
 	respondOK(c, gin.H{"data": list, "total": total, "page": page, "page_size": pageSize})

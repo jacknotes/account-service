@@ -6,6 +6,7 @@ import (
 	"account-service/internal/service"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -79,7 +80,9 @@ func (h *RecordHandler) CreateRecord(c *gin.Context) {
 		respondServerError(c)
 		return
 	}
-	_ = h.logger.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpCreateRecord, "record", strconv.FormatInt(r.ID, 10), req.Description, c.ClientIP(), c.GetHeader("User-Agent"))
+	if err := h.logger.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpCreateRecord, "record", strconv.FormatInt(r.ID, 10), req.Description, c.ClientIP(), c.GetHeader("User-Agent")); err != nil {
+		slog.Warn("audit log failed", "error", err, "action", "create_record")
+	}
 	respondCreated(c, gin.H{"data": r})
 }
 
@@ -105,7 +108,9 @@ func (h *RecordHandler) UpdateRecord(c *gin.Context) {
 		respondServerError(c)
 		return
 	}
-	_ = h.logger.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpUpdateRecord, "record", strconv.FormatInt(id, 10), "", c.ClientIP(), c.GetHeader("User-Agent"))
+	if err := h.logger.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpUpdateRecord, "record", strconv.FormatInt(id, 10), "", c.ClientIP(), c.GetHeader("User-Agent")); err != nil {
+		slog.Warn("audit log failed", "error", err, "action", "update_record")
+	}
 	respondOK(c, gin.H{"message": "已更新"})
 }
 
@@ -126,6 +131,8 @@ func (h *RecordHandler) DeleteRecord(c *gin.Context) {
 		respondServerError(c)
 		return
 	}
-	_ = h.logger.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpDeleteRecord, "record", strconv.FormatInt(id, 10), "", c.ClientIP(), c.GetHeader("User-Agent"))
+	if err := h.logger.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpDeleteRecord, "record", strconv.FormatInt(id, 10), "", c.ClientIP(), c.GetHeader("User-Agent")); err != nil {
+		slog.Warn("audit log failed", "error", err, "action", "delete_record")
+	}
 	respondOK(c, gin.H{"message": "已删除"})
 }

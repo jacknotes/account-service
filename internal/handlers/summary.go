@@ -41,8 +41,16 @@ func (h *SummaryHandler) DailySummary(c *gin.Context) {
 
 // MonthlySummary 每月汇总 GET /api/summary/monthly?year=2024&month=2
 func (h *SummaryHandler) MonthlySummary(c *gin.Context) {
-	year, _ := strconv.Atoi(c.Query("year"))
-	month, _ := strconv.Atoi(c.Query("month"))
+	year, err := strconv.Atoi(c.Query("year"))
+	if err != nil {
+		respondBadRequest(c, "年份参数无效")
+		return
+	}
+	month, err := strconv.Atoi(c.Query("month"))
+	if err != nil {
+		respondBadRequest(c, "月份参数无效")
+		return
+	}
 	if year < 1 || month < 1 || month > 12 {
 		respondBadRequest(c, "year 和 month 参数无效")
 		return
@@ -65,7 +73,11 @@ func (h *SummaryHandler) MonthlySummary(c *gin.Context) {
 
 // YearlySummary 每年汇总 GET /api/summary/yearly?year=2024
 func (h *SummaryHandler) YearlySummary(c *gin.Context) {
-	year, _ := strconv.Atoi(c.Query("year"))
+	year, err := strconv.Atoi(c.Query("year"))
+	if err != nil {
+		respondBadRequest(c, "年份参数无效")
+		return
+	}
 	if year < 1 {
 		respondBadRequest(c, "year 参数无效")
 		return

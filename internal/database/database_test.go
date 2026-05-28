@@ -74,7 +74,7 @@ func TestListRecords(t *testing.T) {
 
 	// keyword filter
 	params.Keyword = "餐饮"
-	list, total, err = db.List(ctx, params, 0)
+	list, total, err = db.List(ctx, params, 1)
 	if err != nil {
 		t.Fatalf("List(keyword) = %v", err)
 	}
@@ -417,5 +417,56 @@ func TestMonthlySummary_BalanceCalculation(t *testing.T) {
 		if item.Balance != item.Income-item.Expense {
 			t.Errorf("breakdown balance %f != income %f - expense %f", item.Balance, item.Income, item.Expense)
 		}
+	}
+}
+
+func TestRecordOps_ZeroUserID_ReturnsUnauthorized(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	if err := db.Create(ctx, &models.Record{Date: "2024-01-01", Amount: 100}, 0); err != ErrUnauthorized {
+		t.Errorf("Create(0) = %v, want ErrUnauthorized", err)
+	}
+	if _, err := db.GetByID(ctx, 1, 0); err != ErrUnauthorized {
+		t.Errorf("GetByID(0) = %v, want ErrUnauthorized", err)
+	}
+	if _, _, err := db.List(ctx, &models.QueryParams{Page: 1, PageSize: 10}, 0); err != ErrUnauthorized {
+		t.Errorf("List(0) = %v, want ErrUnauthorized", err)
+	}
+	if err := db.Update(ctx, 1, 0, &models.UpdateRecordRequest{}); err != ErrUnauthorized {
+		t.Errorf("Update(0) = %v, want ErrUnauthorized", err)
+	}
+	if err := db.Delete(ctx, 1, 0); err != ErrUnauthorized {
+		t.Errorf("Delete(0) = %v, want ErrUnauthorized", err)
+	}
+}
+
+func TestRecordOps_NegativeUserID_ReturnsUnauthorized(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	if err := db.Create(ctx, &models.Record{Date: "2024-01-01", Amount: 100}, -1); err != ErrUnauthorized {
+		t.Errorf("Create(-1) = %v, want ErrUnauthorized", err)
+	}
+	if _, err := db.GetByID(ctx, 1, -1); err != ErrUnauthorized {
+		t.Errorf("GetByID(-1) = %v, want ErrUnauthorized", err)
+	}
+}
+
+func TestSummaryOps_ZeroUserID_ReturnsUnauthorized(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	if _, err := db.DailySummary(ctx, "2024-01-01", 0); err != ErrUnauthorized {
+		t.Errorf("DailySummary(0) = %v, want ErrUnauthorized", err)
+	}
+	if _, err := db.MonthlySummary(ctx, 2024, 1, 0); err != ErrUnauthorized {
+		t.Errorf("MonthlySummary(0) = %v, want ErrUnauthorized", err)
+	}
+	if _, err := db.YearlySummary(ctx, 2024, 0); err != ErrUnauthorized {
+		t.Errorf("YearlySummary(0) = %v, want ErrUnauthorized", err)
+	}
+	if _, err := db.Report(ctx, "2024-01-01", "2024-01-31", 0); err != ErrUnauthorized {
+		t.Errorf("Report(0) = %v, want ErrUnauthorized", err)
 	}
 }
