@@ -197,6 +197,43 @@ MYSQL_TEST_DSN='account:password@tcp(127.0.0.1:3306)/account_service?parseTime=t
 - refresh token 存 SHA-256 哈希并支持轮换/撤销；密码修改后强制下线全部会话
 - access token 黑名单存 MySQL；限流为单实例内存令牌桶（多实例如需共享限流状态，可另接外部限流网关）
 
+## 部署运维
+
+### Docker 栈
+
+```bash
+docker compose up -d --build      # 构建并启动（MySQL 5.7 + 应用）
+docker compose ps                 # 查看状态
+docker compose logs -f account-service   # 应用日志
+docker compose down               # 停止（数据保留在卷中）
+```
+
+- 数据持久化于命名卷 `mysql_data`，`docker compose down` 不会丢数据
+- 健康检查：`GET /healthz`（存活）、`GET /readyz`（MySQL 就绪）
+
+### 自动启动（Windows + WSL2 环境）
+
+本机以 WSL2（Ubuntu 24.04）运行 Docker，配置了两层自启：
+
+1. **WSL 内 systemd 服务** `account-service.service`（已 `enable`）：WSL 启动时自动拉起 `docker compose up -d`。
+   单元文件 `/etc/systemd/system/account-service.service`，管理命令：
+
+   ```bash
+   systemctl status account-service       # 状态
+   journalctl -u account-service          # 自启日志
+   systemctl start|stop account-service   # 手动启停（stop 会执行 compose down）
+   ```
+
+2. **Windows 登录触发器**：启动目录 `...\Startup\account-service-start.cmd`，登录时执行
+   `wsl -d Ubuntu-24.04 -u root -e systemctl start account-service`，从而触发 WSL 与整栈启动。
+
+**启动链路**：Windows 登录 → Startup 的 .cmd → WSL 启动 → systemd 启动 docker → 启动 account-service → 容器就绪 → 访问 `http://localhost:8081/app/`。
+
+> 提示：
+> - 登录时会短暂闪现 cmd 窗口（Startup 的 .cmd 属正常现象）；如需无感可改用隐藏窗口的 VBS 或计划任务。
+> - 若项目目录发生变更，需同步修改 systemd 单元的 `WorkingDirectory` 与 `account-service-start.cmd`。
+> - Docker 镜像加速：本机 `/etc/docker/daemon.json` 配置了可用镜像源（`docker.1panel.live`、`docker.m.daocloud.io`）。
+
 ## 变更日志
 
 ### 未发布（当前工作区）
