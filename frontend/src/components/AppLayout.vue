@@ -59,10 +59,6 @@
         </div>
         <div class="msg-error">{{ totpError }}</div>
         <div class="msg-ok" v-if="totpOk">{{ totpOk }}</div>
-        <template #footer>
-          <button class="btn" type="button" @click="totpOpen = false">取消</button>
-          <button class="btn btn-primary" type="button" :disabled="!totpCode" @click="enableTOTP">启用</button>
-        </template>
       </template>
       <template v-else>
         <p>关闭 TOTP 需要验证当前密码与验证码：</p>
@@ -76,10 +72,11 @@
         </div>
         <div class="msg-error">{{ totpError }}</div>
         <div class="msg-ok" v-if="totpOk">{{ totpOk }}</div>
-        <template #footer>
-          <button class="btn" type="button" @click="totpOpen = false">取消</button>
-          <button class="btn btn-danger" type="button" :disabled="!totpCode || !totpDisablePwd" @click="disableTOTP">关闭</button>
-        </template>
+      </template>
+      <template #footer>
+        <button class="btn" type="button" @click="totpOpen = false">取消</button>
+        <button v-if="!user?.totp_enabled" class="btn btn-primary" type="button" :disabled="!totpCode" @click="enableTOTP">启用</button>
+        <button v-else class="btn btn-danger" type="button" :disabled="!totpCode || !totpDisablePwd" @click="disableTOTP">关闭</button>
       </template>
     </Modal>
   </div>
