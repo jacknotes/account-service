@@ -1,12 +1,11 @@
 package handlers
 
 import (
-	"account-service/internal/cache"
-	"account-service/internal/database"
-	"account-service/internal/middleware"
-	"account-service/internal/models"
-	"account-service/internal/service"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -15,19 +14,28 @@ import (
 	"sync"
 	"time"
 
+	"account-service/internal/middleware"
+	"account-service/internal/models"
+	"account-service/internal/service"
+
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 )
 
+const (
+	accessTokenTTL  = 15 * time.Minute
+	refreshTokenTTL = 7 * 24 * time.Hour
+)
+
+// TOTPRateLimiter 内存实现：按用户限制 TOTP 验证尝试次数。
 type TOTPRateLimiter struct {
 	mu       sync.Mutex
 	attempts map[int64]*totpAttempt
 	maxTries int
 	window   time.Duration
 	blockDur time.Duration
-	redis    *cache.RedisClient
 }
 
 type totpAttempt struct {
@@ -44,35 +52,7 @@ func NewTOTPRateLimiter() *TOTPRateLimiter {
 	}
 }
 
-func NewRedisTOTPRateLimiter(redisClient *cache.RedisClient) *TOTPRateLimiter {
-	return &TOTPRateLimiter{
-		maxTries: 5,
-		window:   5 * time.Minute,
-		blockDur: 5 * time.Minute,
-		redis:    redisClient,
-	}
-}
-
 func (rl *TOTPRateLimiter) Allow(userID int64) bool {
-	if rl.redis != nil {
-		return rl.allowRedis(userID)
-	}
-	return rl.allowMemory(userID)
-}
-
-func (rl *TOTPRateLimiter) allowRedis(userID int64) bool {
-	ctx := context.Background()
-	key := fmt.Sprintf("totp_attempts:%d", userID)
-	val, err := rl.redis.Get(ctx, key)
-	if err != nil {
-		return true
-	}
-	var count int
-	fmt.Sscanf(val, "%d", &count)
-	return count < rl.maxTries
-}
-
-func (rl *TOTPRateLimiter) allowMemory(userID int64) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	a, ok := rl.attempts[userID]
@@ -90,26 +70,6 @@ func (rl *TOTPRateLimiter) allowMemory(userID int64) bool {
 }
 
 func (rl *TOTPRateLimiter) RecordFailure(userID int64) {
-	if rl.redis != nil {
-		rl.recordFailureRedis(userID)
-		return
-	}
-	rl.recordFailureMemory(userID)
-}
-
-func (rl *TOTPRateLimiter) recordFailureRedis(userID int64) {
-	ctx := context.Background()
-	key := fmt.Sprintf("totp_attempts:%d", userID)
-	val, err := rl.redis.IncrWithTTL(ctx, key, rl.window)
-	if err != nil {
-		return
-	}
-	if val == 1 {
-		rl.redis.Set(ctx, key, fmt.Sprintf("%d", val), rl.window)
-	}
-}
-
-func (rl *TOTPRateLimiter) recordFailureMemory(userID int64) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	a, ok := rl.attempts[userID]
@@ -127,20 +87,6 @@ func (rl *TOTPRateLimiter) recordFailureMemory(userID int64) {
 }
 
 func (rl *TOTPRateLimiter) Reset(userID int64) {
-	if rl.redis != nil {
-		rl.resetRedis(userID)
-		return
-	}
-	rl.resetMemory(userID)
-}
-
-func (rl *TOTPRateLimiter) resetRedis(userID int64) {
-	ctx := context.Background()
-	key := fmt.Sprintf("totp_attempts:%d", userID)
-	rl.redis.Delete(ctx, key)
-}
-
-func (rl *TOTPRateLimiter) resetMemory(userID int64) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	delete(rl.attempts, userID)
@@ -162,32 +108,25 @@ type loginAttempt struct {
 }
 
 type AuthHandler struct {
-	users          service.UserService
-	ops            service.OperationLogService
-	db             *database.DB
-	jwtSecret      string
-	totpLimiter    *TOTPRateLimiter
-	loginMu        sync.Mutex
-	loginAttempts  map[string]*loginAttempt
-	quit           chan struct{}
-	redis          *cache.RedisClient
+	users         service.UserService
+	ops           service.OperationLogService
+	jwtSecret     string
+	totpLimiter   *TOTPRateLimiter
+	loginMu       sync.Mutex
+	loginAttempts map[string]*loginAttempt
+	quit          chan struct{}
 }
 
-func NewAuthHandler(users service.UserService, ops service.OperationLogService, db *database.DB, jwtSecret string) *AuthHandler {
-	h := &AuthHandler{users: users, ops: ops, db: db, jwtSecret: jwtSecret, totpLimiter: NewTOTPRateLimiter(), loginAttempts: make(map[string]*loginAttempt), quit: make(chan struct{})}
-	go h.cleanupMaps()
-	return h
-}
-
-func NewRedisAuthHandler(users service.UserService, ops service.OperationLogService, db *database.DB, jwtSecret string, redisClient *cache.RedisClient) *AuthHandler {
+func NewAuthHandler(users service.UserService, ops service.OperationLogService, jwtSecret string) *AuthHandler {
 	h := &AuthHandler{
-		users:       users,
-		ops:         ops,
-		db:          db,
-		jwtSecret:   jwtSecret,
-		totpLimiter: NewRedisTOTPRateLimiter(redisClient),
-		redis:       redisClient,
+		users:         users,
+		ops:           ops,
+		jwtSecret:     jwtSecret,
+		totpLimiter:   NewTOTPRateLimiter(),
+		loginAttempts: make(map[string]*loginAttempt),
+		quit:          make(chan struct{}),
 	}
+	go h.cleanupMaps()
 	return h
 }
 
@@ -212,26 +151,9 @@ func (h *AuthHandler) cleanupMaps() {
 	}
 }
 
-func (h *AuthHandler) checkLoginLock(username string) (locked bool) {
-	if h.redis != nil {
-		return h.checkLoginLockRedis(username)
-	}
-	return h.checkLoginLockMemory(username)
-}
+// ---- 登录失败锁定（内存实现）----
 
-func (h *AuthHandler) checkLoginLockRedis(username string) bool {
-	ctx := context.Background()
-	key := fmt.Sprintf("login_attempts:%s", username)
-	val, err := h.redis.Get(ctx, key)
-	if err != nil {
-		return false
-	}
-	var count int
-	fmt.Sscanf(val, "%d", &count)
-	return count >= 5
-}
-
-func (h *AuthHandler) checkLoginLockMemory(username string) bool {
+func (h *AuthHandler) checkLoginLock(username string) bool {
 	h.loginMu.Lock()
 	defer h.loginMu.Unlock()
 	a, ok := h.loginAttempts[username]
@@ -248,20 +170,6 @@ func (h *AuthHandler) checkLoginLockMemory(username string) bool {
 }
 
 func (h *AuthHandler) recordLoginFailure(username string) {
-	if h.redis != nil {
-		h.recordLoginFailureRedis(username)
-		return
-	}
-	h.recordLoginFailureMemory(username)
-}
-
-func (h *AuthHandler) recordLoginFailureRedis(username string) {
-	ctx := context.Background()
-	key := fmt.Sprintf("login_attempts:%s", username)
-	h.redis.IncrWithTTL(ctx, key, 5*time.Minute)
-}
-
-func (h *AuthHandler) recordLoginFailureMemory(username string) {
 	h.loginMu.Lock()
 	defer h.loginMu.Unlock()
 	a, ok := h.loginAttempts[username]
@@ -279,20 +187,6 @@ func (h *AuthHandler) recordLoginFailureMemory(username string) {
 }
 
 func (h *AuthHandler) resetLoginAttempts(username string) {
-	if h.redis != nil {
-		h.resetLoginAttemptsRedis(username)
-		return
-	}
-	h.resetLoginAttemptsMemory(username)
-}
-
-func (h *AuthHandler) resetLoginAttemptsRedis(username string) {
-	ctx := context.Background()
-	key := fmt.Sprintf("login_attempts:%s", username)
-	h.redis.Delete(ctx, key)
-}
-
-func (h *AuthHandler) resetLoginAttemptsMemory(username string) {
 	h.loginMu.Lock()
 	defer h.loginMu.Unlock()
 	delete(h.loginAttempts, username)
@@ -377,7 +271,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		respondServerError(c)
 		return
 	}
-	refreshToken, err := h.issueRefreshToken(u.ID, u.Username, u.Role)
+	refreshToken, err := h.issueRefreshToken(ctx, u.ID)
 	if err != nil {
 		respondServerError(c)
 		return
@@ -402,7 +296,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		respondBadRequest(c, "请求参数错误")
 		return
 	}
-	if len(req.Username) < 2 || len(req.Username) > 32 {
+	if len([]rune(req.Username)) < 2 || len([]rune(req.Username)) > 32 {
 		respondBadRequest(c, "用户名长度须在 2~32 位之间")
 		return
 	}
@@ -428,7 +322,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		respondServerError(c)
 		return
 	}
-	refreshToken, err := h.issueRefreshToken(u.ID, u.Username, u.Role)
+	refreshToken, err := h.issueRefreshToken(ctx, u.ID)
 	if err != nil {
 		respondServerError(c)
 		return
@@ -455,6 +349,81 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	respondOK(c, gin.H{
 		"id": userID, "username": middleware.GetUsername(c), "role": role, "totp_enabled": totpEnabled,
 	})
+}
+
+// Refresh 使用 refresh token 换发新的 access token 与 refresh token（轮换制：
+// 旧的 refresh token 即刻失效，防止重放）。
+func (h *AuthHandler) Refresh(c *gin.Context) {
+	ctx := c.Request.Context()
+	var req struct {
+		RefreshToken string `json:"refresh_token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondBadRequest(c, "请求参数错误")
+		return
+	}
+	hash := sha256Hex(req.RefreshToken)
+	userID, err := h.users.GetRefreshToken(ctx, hash)
+	if err != nil || userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "refresh token 无效或已过期"})
+		return
+	}
+	u, err := h.users.GetUserByID(ctx, userID)
+	if err != nil || u == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "refresh token 无效或已过期"})
+		return
+	}
+	// 轮换：撤销旧 token，签发新 token
+	if err := h.users.RevokeRefreshToken(ctx, hash); err != nil {
+		respondServerError(c)
+		return
+	}
+	newToken, err := h.issueToken(u.ID, u.Username, u.Role)
+	if err != nil {
+		respondServerError(c)
+		return
+	}
+	newRefresh, err := h.issueRefreshToken(ctx, u.ID)
+	if err != nil {
+		respondServerError(c)
+		return
+	}
+	if err := h.ops.LogOperation(ctx, u.ID, u.Username, service.OpRefresh, "auth", "", "刷新会话", c.ClientIP(), c.GetHeader("User-Agent")); err != nil {
+		slog.Warn("audit log failed", "error", err, "action", "refresh")
+	}
+	respondOK(c, gin.H{
+		"token":         newToken,
+		"refresh_token": newRefresh,
+		"user":          gin.H{"id": u.ID, "username": u.Username, "role": u.Role, "totp_enabled": u.TOTPSecret != ""},
+	})
+}
+
+// Logout 注销当前会话：撤销 refresh token（可带指定 token，否则撤销该用户全部），
+// 并将当前 access token 加入黑名单（存 MySQL）。
+func (h *AuthHandler) Logout(c *gin.Context) {
+	ctx := c.Request.Context()
+	userID := middleware.GetUserID(c)
+	var req struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	_ = c.ShouldBindJSON(&req)
+
+	if req.RefreshToken != "" {
+		if err := h.users.RevokeRefreshToken(ctx, sha256Hex(req.RefreshToken)); err != nil {
+			respondServerError(c)
+			return
+		}
+	} else {
+		if err := h.users.RevokeAllRefreshTokensForUser(ctx, userID); err != nil {
+			respondServerError(c)
+			return
+		}
+	}
+	h.revokeToken(c)
+	if err := h.ops.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpLogout, "auth", "", "退出登录", c.ClientIP(), c.GetHeader("User-Agent")); err != nil {
+		slog.Warn("audit log failed", "error", err, "action", "logout")
+	}
+	respondOK(c, gin.H{"message": "已退出登录"})
 }
 
 func (h *AuthHandler) TOTPSetup(c *gin.Context) {
@@ -554,6 +523,10 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 		respondServerError(c)
 		return
 	}
+	// 修改密码后强制所有已签发会话失效
+	if err := h.users.RevokeAllRefreshTokensForUser(ctx, userID); err != nil {
+		slog.Warn("revoke refresh tokens failed", "error", err)
+	}
 	h.revokeToken(c)
 	if err := h.ops.LogOperation(ctx, userID, middleware.GetUsername(c), service.OpChangePwd, "user", "", "修改自己的密码", c.ClientIP(), c.GetHeader("User-Agent")); err != nil {
 		slog.Warn("audit log failed", "error", err, "action", "change_password")
@@ -568,7 +541,7 @@ func (h *AuthHandler) AddUser(c *gin.Context) {
 		respondBadRequest(c, "请求参数错误")
 		return
 	}
-	if len(req.Username) < 2 || len(req.Username) > 32 {
+	if len([]rune(req.Username)) < 2 || len([]rune(req.Username)) > 32 {
 		respondBadRequest(c, "用户名长度须在 2~32 位之间")
 		return
 	}
@@ -641,6 +614,10 @@ func (h *AuthHandler) TOTPDisable(c *gin.Context) {
 	respondOK(c, gin.H{"message": "TOTP 已关闭"})
 }
 
+// ---------------------------------------------------------------
+// token 签发与撤销
+// ---------------------------------------------------------------
+
 func (h *AuthHandler) issueToken(userID int64, username, role string) (string, error) {
 	if role == "" {
 		role = models.RoleUser
@@ -651,7 +628,7 @@ func (h *AuthHandler) issueToken(userID int64, username, role string) (string, e
 		Role:     role,
 		Type:     "access",
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(accessTokenTTL)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 	}
@@ -659,81 +636,22 @@ func (h *AuthHandler) issueToken(userID int64, username, role string) (string, e
 	return token.SignedString([]byte(h.jwtSecret))
 }
 
-type RefreshClaims struct {
-	UserID   int64  `json:"user_id"`
-	Username string `json:"username"`
-	Role     string `json:"role"`
-	Type     string `json:"type"`
-	jwt.RegisteredClaims
+// issueRefreshToken 生成不透明 refresh token，仅存 SHA-256 哈希到数据库，
+// 支持服务端撤销与轮换。
+func (h *AuthHandler) issueRefreshToken(ctx context.Context, userID int64) (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("generate refresh token: %w", err)
+	}
+	token := base64.RawURLEncoding.EncodeToString(raw)
+	if err := h.users.SaveRefreshToken(ctx, userID, sha256Hex(token), time.Now().Add(refreshTokenTTL)); err != nil {
+		return "", err
+	}
+	return token, nil
 }
 
-func (h *AuthHandler) issueRefreshToken(userID int64, username, role string) (string, error) {
-	if role == "" {
-		role = models.RoleUser
-	}
-	claims := &RefreshClaims{
-		UserID:   userID,
-		Username: username,
-		Role:     role,
-		Type:     "refresh",
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(7 * 24 * time.Hour)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-		},
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(h.jwtSecret))
-}
-
-func (h *AuthHandler) Refresh(c *gin.Context) {
-	var req struct {
-		RefreshToken string `json:"refresh_token" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondBadRequest(c, "请求参数错误")
-		return
-	}
-	claims := &RefreshClaims{}
-	token, err := jwt.ParseWithClaims(req.RefreshToken, claims, func(t *jwt.Token) (interface{}, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-		}
-		return []byte(h.jwtSecret), nil
-	})
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "refresh token 无效或已过期"})
-		return
-	}
-	if !token.Valid || claims.Type != "refresh" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "refresh token 无效或已过期"})
-		return
-	}
-	u, err := h.users.GetUserByID(c.Request.Context(), claims.UserID)
-	if err != nil || u == nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "refresh token 无效或已过期"})
-		return
-	}
-	newToken, err := h.issueToken(claims.UserID, claims.Username, claims.Role)
-	if err != nil {
-		respondServerError(c)
-		return
-	}
-	newRefresh, err := h.issueRefreshToken(claims.UserID, claims.Username, claims.Role)
-	if err != nil {
-		respondServerError(c)
-		return
-	}
-	respondOK(c, gin.H{
-		"token":         newToken,
-		"refresh_token": newRefresh,
-		"user":          gin.H{"id": u.ID, "username": u.Username, "role": u.Role, "totp_enabled": u.TOTPSecret != ""},
-	})
-}
-
+// revokeToken 将当前 access token 加入黑名单（存 MySQL，TTL 为 token 剩余有效期）。
 func (h *AuthHandler) revokeToken(c *gin.Context) {
-	if h.redis == nil {
-		return
-	}
 	auth := c.GetHeader("Authorization")
 	if auth == "" {
 		return
@@ -744,6 +662,9 @@ func (h *AuthHandler) revokeToken(c *gin.Context) {
 	}
 	tokenStr := parts[1]
 	token, err := jwt.ParseWithClaims(tokenStr, &middleware.Claims{}, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
 		return []byte(h.jwtSecret), nil
 	})
 	if err != nil || !token.Valid {
@@ -758,6 +679,12 @@ func (h *AuthHandler) revokeToken(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	key := fmt.Sprintf("token_blacklist:%s", tokenStr)
-	h.redis.Set(ctx, key, "1", ttl)
+	if err := h.users.BlacklistToken(ctx, sha256Hex(tokenStr), time.Now().Add(ttl)); err != nil {
+		slog.Warn("blacklist token failed", "error", err)
+	}
+}
+
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }

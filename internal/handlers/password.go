@@ -6,22 +6,26 @@ import (
 	"unicode"
 )
 
-// validatePasswordStrength validates password complexity requirements:
-// - Minimum 8 characters
-// - At least one uppercase letter
-// - At least one lowercase letter
-// - At least one digit
-// - At least one special character
-// Returns nil if valid, or an error with a Chinese message describing the requirement.
+const (
+	minPasswordLen     = 8
+	maxPasswordBytes   = 72 // bcrypt 有效输入上限，超过会静默截断，必须显式拒绝
+)
+
+// validatePasswordStrength 校验密码强度：
+// - 8~72 字节（bcrypt 上限）
+// - 至少一个大写、一个小写、一个数字、一个特殊字符
 func validatePasswordStrength(password string) error {
-	if len(password) < 8 {
-		return fmt.Errorf("密码长度不能少于 8 位")
+	if len([]byte(password)) < minPasswordLen {
+		return fmt.Errorf("密码长度不能少于 %d 位", minPasswordLen)
+	}
+	if len([]byte(password)) > maxPasswordBytes {
+		return fmt.Errorf("密码过长，不能超过 %d 字节（UTF-8 中文约 %d 个字符）", maxPasswordBytes, maxPasswordBytes/3)
 	}
 
 	var (
-		hasUpper bool
-		hasLower bool
-		hasDigit bool
+		hasUpper   bool
+		hasLower   bool
+		hasDigit   bool
 		hasSpecial bool
 	)
 

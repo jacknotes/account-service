@@ -2,11 +2,11 @@ package middleware
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strings"
-
-	"account-service/internal/cache"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -20,11 +20,14 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-func Auth(jwtSecret string) gin.HandlerFunc {
-	return AuthWithBlacklist(jwtSecret, nil)
+// TokenBlacklister 访问 token 黑名单查询接口（由 database.DB 实现，存储于 MySQL）。
+// 传 nil 则跳过黑名单校验。
+type TokenBlacklister interface {
+	IsTokenBlacklisted(ctx context.Context, tokenHash string) (bool, error)
 }
 
-func AuthWithBlacklist(jwtSecret string, redisClient *cache.RedisClient) gin.HandlerFunc {
+// Auth JWT 认证中间件；blacklister 非空时校验 token 是否已被拉黑。
+func Auth(jwtSecret string, blacklister TokenBlacklister) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		auth := c.GetHeader("Authorization")
 		if auth == "" {
@@ -60,14 +63,15 @@ func AuthWithBlacklist(jwtSecret string, redisClient *cache.RedisClient) gin.Han
 			c.Abort()
 			return
 		}
-		if redisClient != nil {
-			key := fmt.Sprintf("token_blacklist:%s", parts[1])
-			exists, err := redisClient.Exists(context.Background(), key)
+		if blacklister != nil {
+			hash := sha256Hex(parts[1])
+			exists, err := blacklister.IsTokenBlacklisted(c.Request.Context(), hash)
 			if err == nil && exists {
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "登录已过期，请重新登录"})
 				c.Abort()
 				return
 			}
+			// 查询失败时不拦截（黑名单查询不可用不影响正常登录态）
 		}
 		c.Set("user_id", claims.UserID)
 		c.Set("username", claims.Username)
@@ -113,4 +117,9 @@ func RequireAdmin() gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }

@@ -1,7 +1,17 @@
-# 构建阶段
-FROM golang:1.21-alpine AS builder
+# ---- 前端构建（Vue3 + Vite）----
+FROM node:20-alpine AS frontend
+
+WORKDIR /fe
+COPY frontend/package*.json ./
+RUN npm install --no-audit --no-fund
+COPY frontend/ ./
+RUN npm run build
+
+# ---- 后端构建 ----
+FROM golang:1.24-alpine AS builder
 
 ENV GOPROXY=https://goproxy.cn,direct
+ENV CGO_ENABLED=0
 
 WORKDIR /build
 
@@ -11,33 +21,25 @@ RUN go mod download
 
 # 复制源码并编译（纯 Go，无需 CGO）
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o account-service .
+RUN go build -ldflags="-s -w" -o account-service .
 
-# 运行阶段
-FROM alpine:3.19
+# ---- 运行阶段 ----
+FROM alpine:3.20
 
 WORKDIR /app
 
-# 复制二进制和前端
+# 复制二进制与前端构建产物
 COPY --from=builder /build/account-service .
-COPY --from=builder /build/frontend ./frontend
+COPY --from=frontend /fe/dist ./frontend/dist
 
-# 创建数据目录（SQLite 数据库）
-RUN mkdir -p /app/data && \
-    adduser -D -u 1001 appuser && \
+# 创建用户并降权
+RUN adduser -D -u 1001 appuser && \
     chown -R appuser:appuser /app
 
 USER appuser
 
-# 默认端口
 ENV PORT=8081
+ENV FRONTEND_DIR=/app/frontend/dist
 EXPOSE 8081
-
-# 数据持久化（需挂载卷）
-VOLUME ["/app/data"]
-
-# 默认数据库路径
-ENV DATABASE_PATH=/app/data/accounting.db
-ENV FRONTEND_DIR=/app/frontend
 
 CMD ["./account-service"]

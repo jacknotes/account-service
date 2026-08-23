@@ -5,3 +5,6 @@
 data/
 *.md
 .DS_Store
+.env
+frontend/node_modules/
+frontend/dist/

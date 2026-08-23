@@ -1,11 +1,6 @@
 package main
 
 import (
-	"account-service/config"
-	"account-service/internal/cache"
-	"account-service/internal/database"
-	"account-service/internal/handlers"
-	"account-service/internal/middleware"
 	"context"
 	"log/slog"
 	"net/http"
@@ -14,6 +9,11 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"account-service/config"
+	"account-service/internal/database"
+	"account-service/internal/handlers"
+	"account-service/internal/middleware"
 
 	"github.com/gin-gonic/gin"
 )
@@ -29,32 +29,26 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	dbDSN := cfg.Database
-	if cfg.MySQLDSN != "" {
-		dbDSN = cfg.MySQLDSN
-	}
-	db, err := database.New(dbDSN)
+	db, err := database.New(cfg.MySQLDSN)
 	if err != nil {
 		slog.Error("数据库初始化失败", "error", err)
 		os.Exit(1)
 	}
 	defer db.Close()
 
-	var redisClient *cache.RedisClient
-	if cfg.RedisAddr != "" {
-		rc, err := cache.NewRedisClient(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
-		if err != nil {
-			slog.Warn("Redis 连接失败，使用本地内存模式", "error", err)
-		} else {
-			redisClient = rc
-			defer redisClient.Close()
-			slog.Info("Redis 连接成功", "addr", cfg.RedisAddr)
+	r := gin.New()
+	r.Use(gin.Recovery(), middleware.RequestID(), middleware.AccessLog())
+	if len(cfg.TrustedProxies) > 0 {
+		if err := r.SetTrustedProxies(cfg.TrustedProxies); err != nil {
+			slog.Error("设置可信代理失败", "error", err)
 		}
+	} else {
+		// 不信任任何代理：c.ClientIP() 取直连 IP。
+		// 若部署在反代后请配置 TRUSTED_PROXIES，否则限流/登录锁定会按代理 IP 计数。
+		r.SetTrustedProxies(nil)
 	}
 
-	r := gin.Default()
-	r.SetTrustedProxies(nil)
-
+	// CORS
 	r.Use(func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
 		if cfg.AllowedOrigins == "*" {
@@ -77,26 +71,15 @@ func main() {
 		c.Next()
 	})
 
-	var loginLimiter, globalLimiter *middleware.RateLimiter
-	if redisClient != nil {
-		loginLimiter = middleware.NewRedisRateLimiter(1, 3, redisClient)
-		globalLimiter = middleware.NewRedisRateLimiter(10, 30, redisClient)
-	} else {
-		loginLimiter = middleware.NewRateLimiter(1, 3)
-		globalLimiter = middleware.NewRateLimiter(10, 30)
-	}
+	loginLimiter := middleware.NewRateLimiter(1, 3)
+	globalLimiter := middleware.NewRateLimiter(10, 30)
 	defer loginLimiter.Stop()
 	defer globalLimiter.Stop()
 
 	api := r.Group("/api")
 	api.Use(globalLimiter.Limit())
 
-	var authHandler *handlers.AuthHandler
-	if redisClient != nil {
-		authHandler = handlers.NewRedisAuthHandler(db, db, db, cfg.JWTSecret, redisClient)
-	} else {
-		authHandler = handlers.NewAuthHandler(db, db, db, cfg.JWTSecret)
-	}
+	authHandler := handlers.NewAuthHandler(db, db, cfg.JWTSecret)
 
 	api.GET("/auth/register/status", authHandler.RegisterStatus)
 	api.POST("/auth/login", loginLimiter.Limit(), authHandler.Login)
@@ -104,15 +87,15 @@ func main() {
 	api.POST("/auth/refresh", loginLimiter.Limit(), authHandler.Refresh)
 
 	auth := api.Group("")
-	if redisClient != nil {
-		auth.Use(middleware.AuthWithBlacklist(cfg.JWTSecret, redisClient))
-	} else {
-		auth.Use(middleware.Auth(cfg.JWTSecret))
-	}
+	auth.Use(middleware.Auth(cfg.JWTSecret, db))
 	{
 		auth.GET("/auth/me", authHandler.Me)
 		auth.POST("/auth/change-password", authHandler.ChangePassword)
+		auth.POST("/auth/logout", authHandler.Logout)
 		auth.GET("/auth/totp/setup", authHandler.TOTPSetup)
+		auth.POST("/auth/totp/enable", authHandler.TOTPEnable)
+		auth.POST("/auth/totp/disable", authHandler.TOTPDisable)
+
 		admin := auth.Group("")
 		admin.Use(middleware.RequireAdmin())
 		{
@@ -124,8 +107,6 @@ func main() {
 			admin.POST("/auth/users/:id/change-password", authHandler.AdminChangeUserPassword)
 			admin.GET("/auth/operation-logs", authHandler.ListOperationLogs)
 		}
-		auth.POST("/auth/totp/enable", authHandler.TOTPEnable)
-		auth.POST("/auth/totp/disable", authHandler.TOTPDisable)
 
 		recordHandler := handlers.NewRecordHandler(db, db)
 		summaryHandler := handlers.NewSummaryHandler(db)
@@ -145,20 +126,10 @@ func main() {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 		defer cancel()
 
-		status := gin.H{"status": "ok", "mysql": "ok", "redis": "ok"}
-
+		status := gin.H{"status": "ok", "mysql": "ok"}
 		if err := db.Ping(ctx); err != nil {
 			status["mysql"] = "error: " + err.Error()
 			status["status"] = "not ready"
-		}
-
-		if redisClient != nil {
-			if err := redisClient.Ping(ctx); err != nil {
-				status["redis"] = "error: " + err.Error()
-				status["status"] = "not ready"
-			}
-		} else {
-			status["redis"] = "未配置"
 		}
 
 		code := 200
@@ -168,8 +139,17 @@ func main() {
 		c.JSON(code, status)
 	})
 
-	r.Static("/app", cfg.Frontend)
-	r.GET("/", func(c *gin.Context) { c.Redirect(302, "/app/login.html") })
+	// 前端静态资源：优先服务构建产物（frontend/dist）
+	if _, err := os.Stat(cfg.Frontend); err == nil {
+		r.Static("/app", cfg.Frontend)
+		slog.Info("前端静态资源已挂载", "dir", cfg.Frontend)
+	} else {
+		slog.Warn("前端目录不存在，UI 暂不可用（请先执行 npm install && npm run build）", "dir", cfg.Frontend)
+		r.GET("/app/*any", func(c *gin.Context) {
+			c.String(http.StatusOK, "前端尚未构建，请先执行: cd frontend && npm install && npm run build")
+		})
+	}
+	r.GET("/", func(c *gin.Context) { c.Redirect(302, "/app/") })
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,

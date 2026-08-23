@@ -8,49 +8,6 @@ import (
 	"account-service/internal/models"
 )
 
-func (db *DB) migrateUsers() error {
-	_, err := db.conn.Exec(`
-		CREATE TABLE IF NOT EXISTS users (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			username TEXT UNIQUE NOT NULL,
-			password_hash TEXT NOT NULL,
-			totp_secret TEXT,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		);
-	`)
-	if err != nil {
-		return err
-	}
-	_, _ = db.conn.Exec(`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'`)
-	_, _ = db.conn.Exec(`UPDATE users SET role = 'admin' WHERE id = (SELECT MIN(id) FROM users)`)
-	if err := db.migrateLoginLogs(); err != nil {
-		return err
-	}
-	return db.migrateOperationLogs()
-}
-
-func (db *DB) migrateUsersMySQL() error {
-	schema := `
-	CREATE TABLE IF NOT EXISTS users (
-		id BIGINT PRIMARY KEY AUTO_INCREMENT,
-		username VARCHAR(32) UNIQUE NOT NULL,
-		password_hash VARCHAR(255) NOT NULL,
-		totp_secret VARCHAR(255) DEFAULT '',
-		role VARCHAR(16) DEFAULT 'user',
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		INDEX idx_users_username (username)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-	`
-	if _, err := db.conn.Exec(schema); err != nil {
-		return fmt.Errorf("创建 users 表失败: %w", err)
-	}
-
-	if err := db.migrateLoginLogsMySQL(); err != nil {
-		return err
-	}
-	return db.migrateOperationLogsMySQL()
-}
-
 func (db *DB) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
 	var u models.User
 	err := db.conn.QueryRowContext(ctx,
@@ -111,42 +68,35 @@ func (db *DB) SetTOTPSecret(ctx context.Context, id int64, secret string) error 
 	return err
 }
 
-// CreateFirstUser atomically checks that no users exist and inserts the first
-// user as admin.  The check and insert run inside a single transaction so that
-// two concurrent registrations cannot both succeed (eliminates the TOCTOU race).
-// Returns an error if a user already exists or on any database failure.
+// CreateFirstUser 原子地创建首个用户（管理员）。使用单条 INSERT ... SELECT
+// 语句保证并发注册时只有一个能成功（消除 TOCTOU 竞态）。已存在用户时返回错误。
 func (db *DB) CreateFirstUser(ctx context.Context, u *models.User, passwordHash string) error {
-	tx, err := db.conn.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	var n int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
-		return fmt.Errorf("count users: %w", err)
-	}
-	if n > 0 {
-		return fmt.Errorf("users already exist")
-	}
-
 	role := u.Role
 	if role == "" {
 		role = models.RoleUser
 	}
-	res, err := tx.ExecContext(ctx,
-		`INSERT INTO users (username, role, password_hash, totp_secret) VALUES (?, ?, ?, ?)`,
+	res, err := db.conn.ExecContext(ctx,
+		`INSERT INTO users (username, role, password_hash, totp_secret)
+		 SELECT ?, ?, ?, ?
+		 WHERE (SELECT COUNT(*) FROM users) = 0`,
 		u.Username, role, passwordHash, u.TOTPSecret,
 	)
 	if err != nil {
 		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("users already exist")
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
 		return fmt.Errorf("failed to get last insert id: %w", err)
 	}
 	u.ID = id
-	return tx.Commit()
+	return nil
 }
 
 func (db *DB) UserCount(ctx context.Context) (int, error) {

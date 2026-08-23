@@ -2,29 +2,272 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	"account-service/internal/database"
 	"account-service/internal/models"
+	"account-service/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
 
-func newTestDB(t *testing.T) *database.DB {
-	t.Helper()
-	dir := t.TempDir()
-	db, err := database.New(filepath.Join(dir, "test.db"))
-	if err != nil {
-		t.Fatalf("database.New() = %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
+// ----------------------------------------------------------------------
+// 内存 fakes（不再依赖真实数据库，便于 `go test ./...` 无外部服务即可运行）
+// ----------------------------------------------------------------------
+
+type fakeRecordService struct {
+	records  map[int64]*models.Record
+	nextID   int64
+	lastList *models.QueryParams
 }
+
+func newFakeRecordService() *fakeRecordService {
+	return &fakeRecordService{records: make(map[int64]*models.Record), nextID: 1}
+}
+
+func (f *fakeRecordService) Create(_ context.Context, r *models.Record, userID int64) error {
+	r.ID = f.nextID
+	r.UserID = userID
+	f.records[r.ID] = r
+	f.nextID++
+	return nil
+}
+
+func (f *fakeRecordService) GetByID(_ context.Context, id, _ int64) (*models.Record, error) {
+	r, ok := f.records[id]
+	if !ok {
+		return nil, nil
+	}
+	return r, nil
+}
+
+func (f *fakeRecordService) List(_ context.Context, params *models.QueryParams, _ int64) ([]*models.Record, int64, error) {
+	f.lastList = params
+	var list []*models.Record
+	for _, r := range f.records {
+		list = append(list, r)
+	}
+	return list, int64(len(list)), nil
+}
+
+func (f *fakeRecordService) Update(_ context.Context, id, _ int64, req *models.UpdateRecordRequest) error {
+	r, ok := f.records[id]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	if req.Date != nil {
+		r.Date = *req.Date
+	}
+	if req.AmountCents != nil {
+		r.AmountCents = *req.AmountCents
+	}
+	if req.Category != nil {
+		r.Category = *req.Category
+	}
+	if req.Description != nil {
+		r.Description = *req.Description
+	}
+	return nil
+}
+
+func (f *fakeRecordService) Delete(_ context.Context, id, _ int64) error {
+	if _, ok := f.records[id]; !ok {
+		return sql.ErrNoRows
+	}
+	delete(f.records, id)
+	return nil
+}
+
+type fakeSummaryService struct {
+	daily   *models.Summary
+	monthly *models.Summary
+	yearly  *models.Summary
+	report  *models.Report
+}
+
+func (f *fakeSummaryService) DailySummary(_ context.Context, _ string, _ int64) (*models.Summary, error) {
+	if f.daily != nil {
+		return f.daily, nil
+	}
+	return &models.Summary{}, nil
+}
+func (f *fakeSummaryService) MonthlySummary(_ context.Context, _, _ int, _ int64) (*models.Summary, error) {
+	if f.monthly != nil {
+		return f.monthly, nil
+	}
+	return &models.Summary{}, nil
+}
+func (f *fakeSummaryService) YearlySummary(_ context.Context, _ int, _ int64) (*models.Summary, error) {
+	if f.yearly != nil {
+		return f.yearly, nil
+	}
+	return &models.Summary{}, nil
+}
+func (f *fakeSummaryService) Report(_ context.Context, _, _ string, _ int64) (*models.Report, error) {
+	if f.report != nil {
+		return f.report, nil
+	}
+	return &models.Report{}, nil
+}
+
+type fakeUserService struct {
+	byName    map[string]*models.User
+	byID      map[int64]*models.User
+	nextID    int64
+	refresh   map[string]int64 // token_hash -> userID
+	blacklist map[string]bool
+}
+
+func newFakeUserService() *fakeUserService {
+	return &fakeUserService{
+		byName:    make(map[string]*models.User),
+		byID:      make(map[int64]*models.User),
+		nextID:    1,
+		refresh:   make(map[string]int64),
+		blacklist: make(map[string]bool),
+	}
+}
+
+func (f *fakeUserService) CreateUser(_ context.Context, u *models.User, passwordHash string) error {
+	u.ID = f.nextID
+	u.PasswordHash = passwordHash
+	f.byName[u.Username] = u
+	f.byID[u.ID] = u
+	f.nextID++
+	return nil
+}
+
+func (f *fakeUserService) CreateFirstUser(_ context.Context, u *models.User, passwordHash string) error {
+	if len(f.byID) > 0 {
+		return sql.ErrNoRows // 表示“已存在用户”，上层转为“注册已关闭”
+	}
+	u.ID = f.nextID
+	u.PasswordHash = passwordHash
+	f.byName[u.Username] = u
+	f.byID[u.ID] = u
+	f.nextID++
+	return nil
+}
+
+func (f *fakeUserService) GetUserByID(_ context.Context, id int64) (*models.User, error) {
+	if u, ok := f.byID[id]; ok {
+		return u, nil
+	}
+	return nil, nil
+}
+
+func (f *fakeUserService) GetUserByUsername(_ context.Context, username string) (*models.User, error) {
+	if u, ok := f.byName[username]; ok {
+		return u, nil
+	}
+	return nil, nil
+}
+
+func (f *fakeUserService) UpdateUserPassword(_ context.Context, id int64, passwordHash string) error {
+	if u, ok := f.byID[id]; ok {
+		u.PasswordHash = passwordHash
+		return nil
+	}
+	return sql.ErrNoRows
+}
+
+func (f *fakeUserService) SetTOTPSecret(_ context.Context, id int64, secret string) error {
+	if u, ok := f.byID[id]; ok {
+		u.TOTPSecret = secret
+		return nil
+	}
+	return sql.ErrNoRows
+}
+
+func (f *fakeUserService) UserCount(_ context.Context) (int, error) {
+	return len(f.byID), nil
+}
+
+func (f *fakeUserService) ListUsers(_ context.Context) ([]*models.User, error) {
+	var list []*models.User
+	for _, u := range f.byID {
+		list = append(list, u)
+	}
+	return list, nil
+}
+
+func (f *fakeUserService) UpdateUser(_ context.Context, id int64, username, role string) error {
+	u, ok := f.byID[id]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	delete(f.byName, u.Username)
+	u.Username = username
+	u.Role = role
+	f.byName[username] = u
+	return nil
+}
+
+func (f *fakeUserService) DeleteUser(_ context.Context, id int64) error {
+	u, ok := f.byID[id]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	delete(f.byID, id)
+	delete(f.byName, u.Username)
+	return nil
+}
+
+func (f *fakeUserService) SaveRefreshToken(_ context.Context, userID int64, tokenHash string, _ time.Time) error {
+	f.refresh[tokenHash] = userID
+	return nil
+}
+
+func (f *fakeUserService) GetRefreshToken(_ context.Context, tokenHash string) (int64, error) {
+	uid, ok := f.refresh[tokenHash]
+	if !ok {
+		return 0, nil
+	}
+	return uid, nil
+}
+
+func (f *fakeUserService) RevokeRefreshToken(_ context.Context, tokenHash string) error {
+	delete(f.refresh, tokenHash)
+	return nil
+}
+
+func (f *fakeUserService) RevokeAllRefreshTokensForUser(_ context.Context, userID int64) error {
+	for h, uid := range f.refresh {
+		if uid == userID {
+			delete(f.refresh, h)
+		}
+	}
+	return nil
+}
+
+func (f *fakeUserService) BlacklistToken(_ context.Context, tokenHash string, _ time.Time) error {
+	f.blacklist[tokenHash] = true
+	return nil
+}
+
+func (f *fakeUserService) IsTokenBlacklisted(_ context.Context, tokenHash string) (bool, error) {
+	return f.blacklist[tokenHash], nil
+}
+
+type fakeOpLogService struct{}
+
+func (f *fakeOpLogService) LogOperation(_ context.Context, _ int64, _ string, _ string, _ string, _ string, _ string, _ string, _ string) error {
+	return nil
+}
+func (f *fakeOpLogService) LogLogin(_ context.Context, _ *int64, _ string, _ bool, _ string, _ string) error {
+	return nil
+}
+func (f *fakeOpLogService) ListOperationLogs(_ context.Context, _ int, _ int, _ *int64, _ string) ([]*service.OperationLogEntry, int64, error) {
+	return nil, 0, nil
+}
+
+// ----------------------------------------------------------------------
+// 测试辅助
+// ----------------------------------------------------------------------
 
 func setupAuthContext(userID int64, username, role string) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -35,295 +278,246 @@ func setupAuthContext(userID int64, username, role string) gin.HandlerFunc {
 	}
 }
 
-func TestRecordHandler_CreateRecord(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	h := NewRecordHandler(db, db)
+func newTestHandler() (*RecordHandler, *SummaryHandler, *AuthHandler, *fakeUserService) {
+	records := newFakeRecordService()
+	users := newFakeUserService()
+	auth := NewAuthHandler(users, &fakeOpLogService{}, "test-secret-key-for-testing-123456789")
+	return NewRecordHandler(records, &fakeOpLogService{}), NewSummaryHandler(&fakeSummaryService{}), auth, users
+}
 
+func perform(h func(*gin.Context), method, target, body string, setup gin.HandlerFunc) *httptest.ResponseRecorder {
+	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("POST", "/api/records", strings.NewReader(`{"date":"2024-01-15","amount":-50,"category":"餐饮","description":"午餐"}`))
+	c.Request = httptest.NewRequest(method, target, strings.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
-	setupAuthContext(1, "testuser", "admin")(c)
+	if setup != nil {
+		setup(c)
+	}
+	h(c)
+	return w
+}
 
-	// manually set gin context params
-	h.CreateRecord(c)
+// ----------------------------------------------------------------------
+// record handler
+// ----------------------------------------------------------------------
 
+func TestRecordHandler_CreateRecord(t *testing.T) {
+	rh, _, _, _ := newTestHandler()
+	w := perform(rh.CreateRecord, "POST", "/api/records", `{"date":"2024-01-15","amount_cents":-5000,"category":"餐饮","description":"午餐"}`, setupAuthContext(1, "u", "user"))
 	if w.Code != http.StatusCreated {
-		t.Errorf("status = %d, want 201", w.Code)
+		t.Fatalf("status = %d, want 201, body: %s", w.Code, w.Body.String())
 	}
-	body := w.Body.String()
-	if !strings.Contains(body, `"date":"2024-01-15"`) {
-		t.Errorf("body = %s, should contain date", body)
-	}
-
-	// verify record exists in DB
-	ctx := context.Background()
-	list, total, err := db.List(ctx, &models.QueryParams{Page: 1, PageSize: 10}, 1)
-	if err != nil {
-		t.Fatalf("List() = %v", err)
-	}
-	if total != 1 || len(list) != 1 {
-		t.Errorf("total=%d len=%d, want 1", total, len(list))
+	if !strings.Contains(w.Body.String(), `"amount_cents":-5000`) {
+		t.Errorf("body should contain amount_cents: %s", w.Body.String())
 	}
 }
 
-func TestRecordHandler_ListRecords(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	h := NewRecordHandler(db, db)
-	ctx := context.Background()
-
-	db.Create(ctx, &models.Record{Date: "2024-01-01", Amount: 100, Category: "工资"}, 1)
-	db.Create(ctx, &models.Record{Date: "2024-01-02", Amount: -30, Category: "餐饮"}, 1)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("GET", "/api/records", nil)
-	setupAuthContext(1, "testuser", "admin")(c)
-
-	h.ListRecords(c)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", w.Code)
-	}
-	body := w.Body.String()
-	if !strings.Contains(body, `"total":2`) {
-		t.Errorf("body = %s, should contain total:2", body)
-	}
-}
-
-func TestRecordHandler_GetRecord(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	h := NewRecordHandler(db, db)
-	ctx := context.Background()
-
-	r := &models.Record{Date: "2024-01-01", Amount: 100, Category: "工资"}
-	db.Create(ctx, r, 1)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("GET", "/api/records/1", nil)
-	c.Params = gin.Params{{Key: "id", Value: "1"}}
-	setupAuthContext(1, "testuser", "admin")(c)
-
-	h.GetRecord(c)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", w.Code)
-	}
-}
-
-func TestRecordHandler_GetRecord_NotFound(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	h := NewRecordHandler(db, db)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("GET", "/api/records/999", nil)
-	c.Params = gin.Params{{Key: "id", Value: "999"}}
-	setupAuthContext(1, "testuser", "admin")(c)
-
-	h.GetRecord(c)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", w.Code)
-	}
-}
-
-func TestSummaryHandler_DailySummary(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	h := NewSummaryHandler(db)
-	ctx := context.Background()
-
-	db.Create(ctx, &models.Record{Date: "2024-01-01", Amount: 1000, Category: "工资"}, 1)
-	db.Create(ctx, &models.Record{Date: "2024-01-01", Amount: -200, Category: "购物"}, 1)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("GET", "/api/summary/daily?date=2024-01-01", nil)
-	setupAuthContext(1, "testuser", "admin")(c)
-
-	h.DailySummary(c)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", w.Code)
-	}
-	body := w.Body.String()
-	if !strings.Contains(body, `"income":1000`) || !strings.Contains(body, `"expense":200`) {
-		t.Errorf("body = %s, should contain income:1000 and expense:200", body)
+func TestRecordHandler_CreateRecord_InvalidDate(t *testing.T) {
+	rh, _, _, _ := newTestHandler()
+	w := perform(rh.CreateRecord, "POST", "/api/records", `{"date":"2024-13-99","amount_cents":100}`, setupAuthContext(1, "u", "user"))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body: %s", w.Code, w.Body.String())
 	}
 }
 
 func TestRecordHandler_CreateRecord_InvalidJSON(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	h := NewRecordHandler(db, db)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("POST", "/api/records", strings.NewReader(`{invalid json}`))
-	c.Request.Header.Set("Content-Type", "application/json")
-	setupAuthContext(1, "testuser", "admin")(c)
-
-	h.CreateRecord(c)
-
+	rh, _, _, _ := newTestHandler()
+	w := perform(rh.CreateRecord, "POST", "/api/records", `{invalid`, setupAuthContext(1, "u", "user"))
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", w.Code)
+		t.Fatalf("status = %d, want 400", w.Code)
 	}
 }
 
-func TestRecordHandler_UpdateRecord_NotFound(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	h := NewRecordHandler(db, db)
+func TestRecordHandler_ListRecords_SortParams(t *testing.T) {
+	rh, _, _, _ := newTestHandler()
+	w := perform(rh.ListRecords, "GET", "/api/records?sort_field=amount&sort_dir=asc", "", setupAuthContext(1, "u", "user"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+}
 
+func TestRecordHandler_GetRecord_NotFound(t *testing.T) {
+	rh, _, _, _ := newTestHandler()
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("PUT", "/api/records/999", strings.NewReader(`{"date":"2024-01-01","amount":100}`))
+	c.Request = httptest.NewRequest("GET", "/api/records/999", nil)
+	c.Params = gin.Params{{Key: "id", Value: "999"}}
+	setupAuthContext(1, "u", "user")(c)
+	rh.GetRecord(c)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", w.Code)
+	}
+}
+
+func TestRecordHandler_Update_Delete_NotFound(t *testing.T) {
+	rh, _, _, _ := newTestHandler()
+
+	// Update（需手动设置 :id 路由参数，perform() 助手不解析路径参数）
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("PUT", "/api/records/999", strings.NewReader(`{"date":"2024-01-01"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Params = gin.Params{{Key: "id", Value: "999"}}
-	setupAuthContext(1, "testuser", "admin")(c)
-
-	h.UpdateRecord(c)
-
+	setupAuthContext(1, "u", "user")(c)
+	rh.UpdateRecord(c)
 	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404, body: %s", w.Code, w.Body.String())
+		t.Fatalf("update status = %d, want 404, body: %s", w.Code, w.Body.String())
 	}
-}
 
-func TestRecordHandler_DeleteRecord_NotFound(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	h := NewRecordHandler(db, db)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("DELETE", "/api/records/999", nil)
 	c.Params = gin.Params{{Key: "id", Value: "999"}}
-	setupAuthContext(1, "testuser", "admin")(c)
-
-	h.DeleteRecord(c)
-
+	setupAuthContext(1, "u", "user")(c)
+	rh.DeleteRecord(c)
 	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404, body: %s", w.Code, w.Body.String())
+		t.Fatalf("delete status = %d, want 404", w.Code)
 	}
 }
 
-func TestSummaryHandler_DailySummary_NoData(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	h := NewSummaryHandler(db)
+// ----------------------------------------------------------------------
+// summary handler
+// ----------------------------------------------------------------------
 
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("GET", "/api/summary/daily?date=2099-12-01", nil)
-	setupAuthContext(1, "testuser", "admin")(c)
-
-	h.DailySummary(c)
-
+func TestSummaryHandler_DailySummary(t *testing.T) {
+	_, sh, _, _ := newTestHandler()
+	w := perform(sh.DailySummary, "GET", "/api/summary/daily?date=2024-01-01", "", setupAuthContext(1, "u", "user"))
 	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200, body: %s", w.Code, w.Body.String())
-	}
-	body := w.Body.String()
-	if !strings.Contains(body, `"income":0`) || !strings.Contains(body, `"expense":0`) {
-		t.Errorf("body = %s, should contain income:0 and expense:0", body)
+		t.Fatalf("status = %d, want 200", w.Code)
 	}
 }
+
+func TestSummaryHandler_DailySummary_BadDate(t *testing.T) {
+	_, sh, _, _ := newTestHandler()
+	w := perform(sh.DailySummary, "GET", "/api/summary/daily?date=not-a-date", "", setupAuthContext(1, "u", "user"))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
+// ----------------------------------------------------------------------
+// auth handler
+// ----------------------------------------------------------------------
 
 func TestAuthHandler_Register_ShortUsername(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	h := NewAuthHandler(db, db, db, "test-secret-key-for-testing-123456789")
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("POST", "/api/auth/register", strings.NewReader(`{"username":"a","password":"test123"}`))
-	c.Request.Header.Set("Content-Type", "application/json")
-
-	h.Register(c)
-
+	_, _, ah, _ := newTestHandler()
+	w := perform(ah.Register, "POST", "/api/auth/register", `{"username":"a","password":"Admin@123"}`, nil)
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400, body: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestAuthHandler_Register_TooLongUsername(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	h := NewAuthHandler(db, db, db, "test-secret-key-for-testing-123456789")
-
-	longName := "abcdefghijklmnopqrstuvwxyz1234567"
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("POST", "/api/auth/register", strings.NewReader(`{"username":"`+longName+`","password":"test123"}`))
-	c.Request.Header.Set("Content-Type", "application/json")
-
-	h.Register(c)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400, body: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestAuthHandler_RegisterStatus(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	h := NewAuthHandler(db, db, db, "test-secret")
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("GET", "/api/auth/register/status", nil)
-
-	h.RegisterStatus(c)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", w.Code)
-	}
-	if !strings.Contains(w.Body.String(), `"allow_register":true`) {
-		t.Errorf("body = %s, should allow register", w.Body.String())
+		t.Fatalf("status = %d, want 400", w.Code)
 	}
 }
 
 func TestAuthHandler_RegisterAndLogin(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db := newTestDB(t)
-	h := NewAuthHandler(db, db, db, "test-secret-key-for-testing-123456789")
+	_, _, ah, _ := newTestHandler()
 
-	// Register
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest("POST", "/api/auth/register", strings.NewReader(`{"username":"admin","password":"Admin@123"}`))
-	c.Request.Header.Set("Content-Type", "application/json")
-
-	h.Register(c)
-
+	w := perform(ah.Register, "POST", "/api/auth/register", `{"username":"admin","password":"Admin@123"}`, nil)
 	if w.Code != http.StatusCreated {
-		t.Errorf("register status = %d, want 201. body: %s", w.Code, w.Body.String())
+		t.Fatalf("register status = %d, want 201: %s", w.Code, w.Body.String())
 	}
 
-	// Login
-	w2 := httptest.NewRecorder()
-	c2, _ := gin.CreateTestContext(w2)
-	c2.Request = httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(`{"username":"admin","password":"Admin@123"}`))
-	c2.Request.Header.Set("Content-Type", "application/json")
-
-	h.Login(c2)
-
-	if w2.Code != http.StatusOK {
-		t.Errorf("login status = %d, want 200. body: %s", w2.Code, w2.Body.String())
+	w = perform(ah.Login, "POST", "/api/auth/login", `{"username":"admin","password":"Admin@123"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("login status = %d, want 200: %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w2.Body.String(), `"token"`) {
-		t.Errorf("login response should contain token: %s", w2.Body.String())
+	if !strings.Contains(w.Body.String(), `"token"`) || !strings.Contains(w.Body.String(), `"refresh_token"`) {
+		t.Errorf("login response missing token/refresh_token: %s", w.Body.String())
 	}
 }
 
-func TestMain(m *testing.M) {
-	os.Setenv("JWT_SECRET", "test-secret-key-for-testing-only!!!!")
-	code := m.Run()
-	os.Unsetenv("JWT_SECRET")
-	os.Exit(code)
+func TestAuthHandler_Refresh_RotatesToken(t *testing.T) {
+	_, _, ah, users := newTestHandler()
+	// 仅注册（签发一个 refresh token），避免登录再签发一个干扰计数
+	w := perform(ah.Register, "POST", "/api/auth/register", `{"username":"admin","password":"Admin@123"}`, nil)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, want 201: %s", w.Code, w.Body.String())
+	}
+	rt := extractJSONField(w.Body.String(), "refresh_token")
+	if rt == "" {
+		t.Fatal("register response missing refresh_token")
+	}
+
+	w = perform(ah.Refresh, "POST", "/api/auth/refresh", `{"refresh_token":"`+rt+`"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("refresh status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	// 旧 token 应已被轮换撤销，只剩一个新 token
+	if len(users.refresh) != 1 {
+		t.Fatalf("after rotation should have exactly 1 live refresh token, got %d", len(users.refresh))
+	}
+	// 用旧 token 再次刷新应失败
+	w2 := perform(ah.Refresh, "POST", "/api/auth/refresh", `{"refresh_token":"`+rt+`"}`, nil)
+	if w2.Code != http.StatusUnauthorized {
+		t.Fatalf("replay of old refresh token status = %d, want 401", w2.Code)
+	}
+}
+
+func TestAuthHandler_Logout_RevokesTokens(t *testing.T) {
+	_, _, ah, users := newTestHandler()
+	// 仅注册（签发一个 refresh token），避免登录再签发一个干扰计数
+	w := perform(ah.Register, "POST", "/api/auth/register", `{"username":"admin","password":"Admin@123"}`, nil)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, want 201: %s", w.Code, w.Body.String())
+	}
+	rt := extractJSONField(w.Body.String(), "refresh_token")
+	if rt == "" {
+		t.Fatal("register response missing refresh_token")
+	}
+
+	w = perform(ah.Logout, "POST", "/api/auth/logout", `{"refresh_token":"`+rt+`"}`, setupAuthContext(1, "admin", "admin"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("logout status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if len(users.refresh) != 0 {
+		t.Errorf("refresh tokens should be revoked after logout, got %d", len(users.refresh))
+	}
+}
+
+// extractJSONField 从 JSON 字符串中提取指定字段的字符串值（测试用，非完整 JSON 解析）。
+func extractJSONField(body, field string) string {
+	needle := `"` + field + `":"`
+	idx := strings.Index(body, needle)
+	if idx < 0 {
+		return ""
+	}
+	rest := body[idx+len(needle):]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
+}
+
+// ----------------------------------------------------------------------
+// 纯函数单元测试
+// ----------------------------------------------------------------------
+
+func TestValidatePasswordStrength(t *testing.T) {
+	if err := validatePasswordStrength("Abcdef1!"); err != nil {
+		t.Errorf("valid password rejected: %v", err)
+	}
+	if err := validatePasswordStrength("short1!"); err == nil {
+		t.Error("too-short password accepted")
+	}
+	if err := validatePasswordStrength("abcdefgh"); err == nil {
+		t.Error("no special/digit password accepted")
+	}
+	// 超长密码（>72 字节）应被拒绝，避免 bcrypt 静默截断
+	long := strings.Repeat("Ab1!", 30) // 120 字节
+	if err := validatePasswordStrength(long); err == nil {
+		t.Error("over-72-byte password accepted")
+	}
+}
+
+func TestIsValidDate(t *testing.T) {
+	for _, good := range []string{"2024-01-15", "2024-12-31", "2000-02-29"} {
+		if !isValidDate(good) {
+			t.Errorf("isValidDate(%q) = false, want true", good)
+		}
+	}
+	for _, bad := range []string{"2024-13-01", "2024-02-30", "20240101", "abc", ""} {
+		if isValidDate(bad) {
+			t.Errorf("isValidDate(%q) = true, want false", bad)
+		}
+	}
 }

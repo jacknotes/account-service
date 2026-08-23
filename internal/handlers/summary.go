@@ -24,18 +24,22 @@ func (h *SummaryHandler) DailySummary(c *gin.Context) {
 		respondBadRequest(c, "缺少 date 参数")
 		return
 	}
-	s, err := 	h.svc.DailySummary(c.Request.Context(), date, middleware.GetUserID(c))
+	if !isValidDate(date) {
+		respondBadRequest(c, "日期格式必须为 YYYY-MM-DD")
+		return
+	}
+	s, err := h.svc.DailySummary(c.Request.Context(), date, middleware.GetUserID(c))
 	if err != nil {
 		respondServerError(c)
 		return
 	}
 	respondOK(c, gin.H{
-		"date":    date,
-		"income":  s.Income,
-		"expense": s.Expense,
-		"balance": s.Balance,
-		"count":   s.Count,
-		"records": s.Records,
+		"date":          date,
+		"income_cents":  s.IncomeCents,
+		"expense_cents": s.ExpenseCents,
+		"balance_cents": s.BalanceCents,
+		"count":         s.Count,
+		"records":       s.Records,
 	})
 }
 
@@ -55,19 +59,19 @@ func (h *SummaryHandler) MonthlySummary(c *gin.Context) {
 		respondBadRequest(c, "year 和 month 参数无效")
 		return
 	}
-	s, err := 	h.svc.MonthlySummary(c.Request.Context(), year, month, middleware.GetUserID(c))
+	s, err := h.svc.MonthlySummary(c.Request.Context(), year, month, middleware.GetUserID(c))
 	if err != nil {
 		respondServerError(c)
 		return
 	}
 	respondOK(c, gin.H{
-		"year":      year,
-		"month":     month,
-		"income":    s.Income,
-		"expense":   s.Expense,
-		"balance":   s.Balance,
-		"count":     s.Count,
-		"breakdown": s.Breakdown,
+		"year":          year,
+		"month":         month,
+		"income_cents":  s.IncomeCents,
+		"expense_cents": s.ExpenseCents,
+		"balance_cents": s.BalanceCents,
+		"count":         s.Count,
+		"breakdown":     s.Breakdown,
 	})
 }
 
@@ -82,18 +86,18 @@ func (h *SummaryHandler) YearlySummary(c *gin.Context) {
 		respondBadRequest(c, "year 参数无效")
 		return
 	}
-	s, err := 	h.svc.YearlySummary(c.Request.Context(), year, middleware.GetUserID(c))
+	s, err := h.svc.YearlySummary(c.Request.Context(), year, middleware.GetUserID(c))
 	if err != nil {
 		respondServerError(c)
 		return
 	}
 	respondOK(c, gin.H{
-		"year":      year,
-		"income":    s.Income,
-		"expense":   s.Expense,
-		"balance":   s.Balance,
-		"count":     s.Count,
-		"breakdown": s.Breakdown,
+		"year":          year,
+		"income_cents":  s.IncomeCents,
+		"expense_cents": s.ExpenseCents,
+		"balance_cents": s.BalanceCents,
+		"count":         s.Count,
+		"breakdown":     s.Breakdown,
 	})
 }
 
@@ -105,11 +109,15 @@ func (h *SummaryHandler) Report(c *gin.Context) {
 		respondBadRequest(c, "缺少 start_date 或 end_date")
 		return
 	}
+	if !isValidDate(startDate) || !isValidDate(endDate) {
+		respondBadRequest(c, "日期格式必须为 YYYY-MM-DD")
+		return
+	}
 	if startDate > endDate {
 		respondBadRequest(c, "start_date 不能大于 end_date")
 		return
 	}
-	r, err := 	h.svc.Report(c.Request.Context(), startDate, endDate, middleware.GetUserID(c))
+	r, err := h.svc.Report(c.Request.Context(), startDate, endDate, middleware.GetUserID(c))
 	if err != nil {
 		respondServerError(c)
 		return

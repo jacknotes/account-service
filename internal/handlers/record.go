@@ -21,14 +21,15 @@ func NewRecordHandler(db service.RecordService, logger service.OperationLogServi
 	return &RecordHandler{db: db, logger: logger}
 }
 
-// ListRecords 查询记录（支持日期范围和关键字）
-// GET /api/records?start_date=2024-01-01&end_date=2024-12-31&keyword=餐饮&page=1&page_size=20
+// ListRecords 查询记录（支持日期范围、关键字、排序、分页）
+// GET /api/records?start_date=&end_date=&keyword=&sort_field=date&sort_dir=desc&page=1&page_size=20
 func (h *RecordHandler) ListRecords(c *gin.Context) {
 	var params models.QueryParams
 	if err := c.ShouldBindQuery(&params); err != nil {
 		respondBadRequest(c, "请求参数错误")
 		return
 	}
+	params.Normalize()
 	list, total, err := h.db.List(c.Request.Context(), &params, middleware.GetUserID(c))
 	if err != nil {
 		respondServerError(c)
@@ -39,6 +40,8 @@ func (h *RecordHandler) ListRecords(c *gin.Context) {
 		"total": total,
 		"page":  params.Page,
 		"size":  params.PageSize,
+		"sort_field": params.SortField,
+		"sort_dir":   params.SortDir,
 	})
 }
 
@@ -68,9 +71,13 @@ func (h *RecordHandler) CreateRecord(c *gin.Context) {
 		respondBadRequest(c, "请求参数错误")
 		return
 	}
+	if msg := validateRecord(req.Date, req.Category, req.Description); msg != "" {
+		respondBadRequest(c, msg)
+		return
+	}
 	r := &models.Record{
 		Date:        req.Date,
-		Amount:      req.Amount,
+		AmountCents: req.AmountCents,
 		Category:    req.Category,
 		Description: req.Description,
 	}
@@ -86,7 +93,7 @@ func (h *RecordHandler) CreateRecord(c *gin.Context) {
 	respondCreated(c, gin.H{"data": r})
 }
 
-// UpdateRecord 更新记录
+// UpdateRecord 更新记录（仅更新提供的字段）
 func (h *RecordHandler) UpdateRecord(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -97,6 +104,24 @@ func (h *RecordHandler) UpdateRecord(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondBadRequest(c, "请求参数错误")
 		return
+	}
+	if req.Date != nil || req.Category != nil || req.Description != nil {
+		date := ""
+		if req.Date != nil {
+			date = *req.Date
+		}
+		category := ""
+		if req.Category != nil {
+			category = *req.Category
+		}
+		description := ""
+		if req.Description != nil {
+			description = *req.Description
+		}
+		if msg := validateRecord(date, category, description); msg != "" {
+			respondBadRequest(c, msg)
+			return
+		}
 	}
 	userID := middleware.GetUserID(c)
 	ctx := c.Request.Context()

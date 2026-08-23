@@ -5,143 +5,45 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	_ "modernc.org/sqlite"
 
 	"account-service/internal/models"
 )
 
+// ErrUnauthorized 表示缺少合法的用户 ID（防止越权操作）。
 var ErrUnauthorized = errors.New("unauthorized: valid user ID required")
 
-const driverMySQL = "mysql"
-const driverSQLite = "sqlite"
-
+// DB 封装 MySQL 连接与数据访问。仅支持 MySQL。
 type DB struct {
-	conn   *sql.DB
-	driver string
+	conn *sql.DB
 }
 
-func isMySQLDSN(dsn string) bool {
-	return strings.Contains(dsn, "@tcp(") || strings.Contains(dsn, "@unix(")
-}
-
-func New(dbPath string) (*DB, error) {
-	var driverName string
-	var dsn string
-
-	if isMySQLDSN(dbPath) {
-		driverName = driverMySQL
-		dsn = dbPath
-	} else {
-		driverName = driverSQLite
-		dsn = dbPath
-		dir := filepath.Dir(dbPath)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return nil, err
-		}
-	}
-
-	conn, err := sql.Open(driverName, dsn)
+// New 创建 MySQL 连接并执行版本化迁移。
+func New(dsn string) (*DB, error) {
+	conn, err := sql.Open("mysql", dsn)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("打开 MySQL 连接失败: %w", err)
 	}
 
-	if driverName == driverMySQL {
-		conn.SetMaxOpenConns(50)
-		conn.SetMaxIdleConns(10)
-		conn.SetConnMaxLifetime(10 * time.Minute)
-		conn.SetConnMaxIdleTime(3 * time.Minute)
-	} else {
-		conn.SetMaxOpenConns(25)
-		conn.SetMaxIdleConns(5)
-		conn.SetConnMaxLifetime(5 * time.Minute)
+	conn.SetMaxOpenConns(50)
+	conn.SetMaxIdleConns(10)
+	conn.SetConnMaxLifetime(10 * time.Minute)
+	conn.SetConnMaxIdleTime(3 * time.Minute)
+
+	if err := conn.Ping(); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("MySQL 连接失败（请检查 MYSQL_DSN 与网络）: %w", err)
 	}
 
-	db := &DB{conn: conn, driver: driverName}
+	db := &DB{conn: conn}
 	if err := db.migrate(); err != nil {
+		conn.Close()
 		return nil, err
 	}
 	return db, nil
-}
-
-func (db *DB) isMySQL() bool {
-	return db.driver == driverMySQL
-}
-
-func (db *DB) migrate() error {
-	if db.isMySQL() {
-		return db.migrateMySQL()
-	}
-	return db.migrateSQLite()
-}
-
-func (db *DB) migrateMySQL() error {
-	schema := `
-	CREATE TABLE IF NOT EXISTS records (
-		id BIGINT PRIMARY KEY AUTO_INCREMENT,
-		user_id BIGINT NOT NULL DEFAULT 0,
-		date VARCHAR(10) NOT NULL,
-		amount DECIMAL(12,2) NOT NULL,
-		category VARCHAR(64),
-		description VARCHAR(255),
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		INDEX idx_records_date (date),
-		INDEX idx_records_category (category),
-		INDEX idx_records_user (user_id)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-	`
-	if _, err := db.conn.Exec(schema); err != nil {
-		return fmt.Errorf("创建 records 表失败: %w", err)
-	}
-
-	if err := db.migrateUsersMySQL(); err != nil {
-		return err
-	}
-
-	db.ignoreDuplicateColumn("ALTER TABLE records ADD COLUMN user_id BIGINT NOT NULL DEFAULT 0")
-	return nil
-}
-
-func (db *DB) migrateSQLite() error {
-	schema := `
-	CREATE TABLE IF NOT EXISTS records (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		date TEXT NOT NULL,
-		amount REAL NOT NULL,
-		category TEXT,
-		description TEXT,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	);
-	CREATE INDEX IF NOT EXISTS idx_records_date ON records(date);
-	CREATE INDEX IF NOT EXISTS idx_records_category ON records(category);
-	`
-	if _, err := db.conn.Exec(schema); err != nil {
-		return err
-	}
-	if err := db.migrateUsers(); err != nil {
-		return err
-	}
-	_, _ = db.conn.Exec(`ALTER TABLE records ADD COLUMN user_id INTEGER`)
-	_, _ = db.conn.Exec(`CREATE INDEX IF NOT EXISTS idx_records_user ON records(user_id)`)
-	return nil
-}
-
-func (db *DB) ignoreDuplicateColumn(stmt string) {
-	_, err := db.conn.Exec(stmt)
-	if err != nil {
-		if db.isMySQL() {
-			if strings.Contains(err.Error(), "Duplicate column name") {
-				return
-			}
-		}
-	}
 }
 
 func (db *DB) Close() error {
@@ -152,6 +54,7 @@ func (db *DB) Ping(ctx context.Context) error {
 	return db.conn.PingContext(ctx)
 }
 
+// requireUserID 校验调用方必须携带有效的用户 ID。
 func requireUserID(userID int64) error {
 	if userID <= 0 {
 		return ErrUnauthorized
@@ -159,14 +62,198 @@ func requireUserID(userID int64) error {
 	return nil
 }
 
+// ---------------------------------------------------------------
+// 版本化迁移：每次改动 schema 追加一个 migration，不要修改历史版本。
+// ---------------------------------------------------------------
+
+type migration struct {
+	version    string
+	statements []string
+}
+
+var migrations = []migration{
+	{
+		version: "001_init",
+		statements: []string{
+			`CREATE TABLE IF NOT EXISTS users (
+				id BIGINT PRIMARY KEY AUTO_INCREMENT,
+				username VARCHAR(32) UNIQUE NOT NULL,
+				password_hash VARCHAR(255) NOT NULL,
+				totp_secret VARCHAR(255) DEFAULT '',
+				role VARCHAR(16) DEFAULT 'user',
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				INDEX idx_users_username (username)
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+			`CREATE TABLE IF NOT EXISTS records (
+				id BIGINT PRIMARY KEY AUTO_INCREMENT,
+				user_id BIGINT NOT NULL,
+				date VARCHAR(10) NOT NULL,
+				amount_cents BIGINT NOT NULL,
+				category VARCHAR(64),
+				description VARCHAR(255),
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+				INDEX idx_records_user_date (user_id, date),
+				INDEX idx_records_user_category (user_id, category),
+				CONSTRAINT fk_records_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+			`CREATE TABLE IF NOT EXISTS login_logs (
+				id BIGINT PRIMARY KEY AUTO_INCREMENT,
+				user_id BIGINT NULL,
+				username VARCHAR(32) NOT NULL,
+				success TINYINT NOT NULL DEFAULT 0,
+				ip VARCHAR(45),
+				user_agent VARCHAR(255),
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				INDEX idx_login_logs_username (username),
+				INDEX idx_login_logs_created (created_at),
+				CONSTRAINT fk_login_logs_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+			`CREATE TABLE IF NOT EXISTS operation_logs (
+				id BIGINT PRIMARY KEY AUTO_INCREMENT,
+				user_id BIGINT NOT NULL,
+				username VARCHAR(32) NOT NULL,
+				action VARCHAR(32) NOT NULL,
+				target_type VARCHAR(32),
+				target_id VARCHAR(64),
+				detail VARCHAR(255),
+				ip VARCHAR(45),
+				user_agent VARCHAR(255),
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				INDEX idx_op_logs_user (user_id),
+				INDEX idx_op_logs_action (action),
+				INDEX idx_op_logs_created (created_at),
+				CONSTRAINT fk_op_logs_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+
+			`CREATE TABLE IF NOT EXISTS refresh_tokens (
+				id BIGINT PRIMARY KEY AUTO_INCREMENT,
+				user_id BIGINT NOT NULL,
+				token_hash CHAR(64) UNIQUE NOT NULL,
+				expires_at DATETIME NOT NULL,
+				revoked TINYINT NOT NULL DEFAULT 0,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				INDEX idx_rt_user (user_id),
+				CONSTRAINT fk_rt_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		},
+	},
+	{
+		version: "002_adopt_legacy_records",
+		// 历史（非 MySQL 时代）可能遗留 user_id 为空/0 的记录。这里把它们划归到
+		// ID 最小的用户（通常是首个管理员），避免“无主数据对所有人可见”。
+		statements: []string{
+			`UPDATE records SET user_id = (SELECT MIN(id) FROM users)
+			 WHERE (user_id IS NULL OR user_id = 0)
+			   AND (SELECT COUNT(*) FROM users) > 0`,
+		},
+	},
+	{
+		version: "003_token_blacklist",
+		// access token 黑名单（登出/改密后拉黑，替代原 Redis 方案）。
+		statements: []string{
+			`CREATE TABLE IF NOT EXISTS token_blacklist (
+				id BIGINT PRIMARY KEY AUTO_INCREMENT,
+				token_hash CHAR(64) UNIQUE NOT NULL,
+				expires_at DATETIME NOT NULL,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		},
+	},
+}
+
+func (db *DB) migrate() error {
+	if _, err := db.conn.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+		version VARCHAR(64) PRIMARY KEY,
+		applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`); err != nil {
+		return fmt.Errorf("创建 schema_migrations 失败: %w", err)
+	}
+
+	// 升级旧库：旧版本 records 使用 amount DECIMAL，这里转为 amount_cents BIGINT（分）。
+	// 幂等：仅当存在 amount 且不存在 amount_cents 时执行。
+	if err := db.upgradeLegacyAmount(); err != nil {
+		return fmt.Errorf("升级旧版 amount 字段失败: %w", err)
+	}
+
+	for _, m := range migrations {
+		var n int
+		if err := db.conn.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, m.version).Scan(&n); err != nil {
+			return fmt.Errorf("查询迁移状态失败: %w", err)
+		}
+		if n > 0 {
+			continue
+		}
+		for _, stmt := range m.statements {
+			if _, err := db.conn.Exec(stmt); err != nil {
+				return fmt.Errorf("迁移 %s 执行失败: %w", m.version, err)
+			}
+		}
+		if _, err := db.conn.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, m.version); err != nil {
+			return fmt.Errorf("记录迁移版本失败: %w", err)
+		}
+	}
+	return nil
+}
+
+// columnExists 判断某表的某列是否存在。
+func (db *DB) columnExists(table, column string) (bool, error) {
+	var n int
+	err := db.conn.QueryRow(
+		`SELECT COUNT(*) FROM information_schema.columns
+		 WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+		table, column,
+	).Scan(&n)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// upgradeLegacyAmount 把旧版 amount(DECIMAL 元) 迁移为 amount_cents(BIGINT 分)。
+func (db *DB) upgradeLegacyAmount() error {
+	hasAmount, err := db.columnExists("records", "amount")
+	if err != nil {
+		return err
+	}
+	hasAmountCents, err := db.columnExists("records", "amount_cents")
+	if err != nil {
+		return err
+	}
+	if !hasAmount || hasAmountCents {
+		return nil
+	}
+
+	stmts := []string{
+		`ALTER TABLE records ADD COLUMN amount_cents BIGINT NULL AFTER amount`,
+		`UPDATE records SET amount_cents = ROUND(amount * 100)`,
+		`ALTER TABLE records MODIFY COLUMN amount_cents BIGINT NOT NULL`,
+	}
+	for _, s := range stmts {
+		if _, err := db.conn.Exec(s); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------
+// records CRUD（均强制限定 user_id，杜绝跨用户访问）
+// ---------------------------------------------------------------
+
+const recordColumns = "id, user_id, date, amount_cents, category, description, created_at, updated_at"
+
 func (db *DB) Create(ctx context.Context, r *models.Record, userID int64) error {
 	if err := requireUserID(userID); err != nil {
 		return err
 	}
 	r.UserID = userID
 	res, err := db.conn.ExecContext(ctx,
-		`INSERT INTO records (user_id, date, amount, category, description) VALUES (?, ?, ?, ?, ?)`,
-		r.UserID, r.Date, r.Amount, r.Category, r.Description,
+		`INSERT INTO records (user_id, date, amount_cents, category, description) VALUES (?, ?, ?, ?, ?)`,
+		r.UserID, r.Date, r.AmountCents, r.Category, r.Description,
 	)
 	if err != nil {
 		return err
@@ -184,15 +271,9 @@ func (db *DB) GetByID(ctx context.Context, id, userID int64) (*models.Record, er
 		return nil, err
 	}
 	var r models.Record
-	query := `SELECT id, user_id, date, amount, category, description, created_at, updated_at 
-	          FROM records WHERE id = ?`
-	args := []interface{}{id}
-	if userID > 0 {
-		query += " AND (user_id = ? OR user_id IS NULL)"
-		args = append(args, userID)
-	}
-	err := db.conn.QueryRowContext(ctx, query, args...).Scan(
-		&r.ID, &r.UserID, &r.Date, &r.Amount, &r.Category, &r.Description, &r.CreatedAt, &r.UpdatedAt,
+	query := `SELECT ` + recordColumns + ` FROM records WHERE id = ? AND user_id = ?`
+	err := db.conn.QueryRowContext(ctx, query, id, userID).Scan(
+		&r.ID, &r.UserID, &r.Date, &r.AmountCents, &r.Category, &r.Description, &r.CreatedAt, &r.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -203,6 +284,20 @@ func (db *DB) GetByID(ctx context.Context, id, userID int64) (*models.Record, er
 	return &r, nil
 }
 
+// sortExpr 将排序字段映射为 SQL 表达式，字段白名单校验在 Normalize() 中完成。
+func sortExpr(field string) string {
+	switch field {
+	case "amount":
+		return "amount_cents"
+	case "category":
+		return "category"
+	case "created_at":
+		return "created_at"
+	default:
+		return "date"
+	}
+}
+
 func (db *DB) List(ctx context.Context, params *models.QueryParams, userID int64) ([]*models.Record, int64, error) {
 	if err := requireUserID(userID); err != nil {
 		return nil, 0, err
@@ -211,12 +306,9 @@ func (db *DB) List(ctx context.Context, params *models.QueryParams, userID int64
 	offset := (params.Page - 1) * params.PageSize
 
 	var args []interface{}
-	where := "1=1"
+	where := "user_id = ?"
+	args = append(args, userID)
 
-	if userID > 0 {
-		where += " AND (user_id = ? OR user_id IS NULL)"
-		args = append(args, userID)
-	}
 	if params.StartDate != "" {
 		where += " AND date >= ?"
 		args = append(args, params.StartDate)
@@ -237,9 +329,10 @@ func (db *DB) List(ctx context.Context, params *models.QueryParams, userID int64
 		return nil, 0, err
 	}
 
-	query := `SELECT id, user_id, date, amount, category, description, created_at, updated_at 
-	          FROM records WHERE ` + where + ` ORDER BY date DESC, id DESC LIMIT ? OFFSET ?`
+	order := sortExpr(params.SortField) + " " + params.SortDir + ", id " + params.SortDir
+	query := `SELECT ` + recordColumns + ` FROM records WHERE ` + where + ` ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 	args = append(args, params.PageSize, offset)
+
 	rows, err := db.conn.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
@@ -249,7 +342,7 @@ func (db *DB) List(ctx context.Context, params *models.QueryParams, userID int64
 	var list []*models.Record
 	for rows.Next() {
 		var r models.Record
-		if err := rows.Scan(&r.ID, &r.UserID, &r.Date, &r.Amount, &r.Category, &r.Description, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Date, &r.AmountCents, &r.Category, &r.Description, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, 0, err
 		}
 		list = append(list, &r)
@@ -271,15 +364,10 @@ func (db *DB) Update(ctx context.Context, id, userID int64, req *models.UpdateRe
 	defer tx.Rollback()
 
 	var cur models.Record
-	selQuery := `SELECT id, user_id, date, amount, category, description, created_at, updated_at FROM records WHERE id=?`
-	selArgs := []interface{}{id}
-	if userID > 0 {
-		selQuery += " AND (user_id = ? OR user_id IS NULL)"
-		selArgs = append(selArgs, userID)
-	}
-	err = tx.QueryRowContext(ctx, selQuery, selArgs...).Scan(
-		&cur.ID, &cur.UserID, &cur.Date, &cur.Amount, &cur.Category, &cur.Description, &cur.CreatedAt, &cur.UpdatedAt,
-	)
+	err = tx.QueryRowContext(ctx,
+		`SELECT `+recordColumns+` FROM records WHERE id = ? AND user_id = ? FOR UPDATE`,
+		id, userID,
+	).Scan(&cur.ID, &cur.UserID, &cur.Date, &cur.AmountCents, &cur.Category, &cur.Description, &cur.CreatedAt, &cur.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return sql.ErrNoRows
 	}
@@ -287,12 +375,12 @@ func (db *DB) Update(ctx context.Context, id, userID int64, req *models.UpdateRe
 		return err
 	}
 
-	date, amount, category, desc := cur.Date, cur.Amount, cur.Category, cur.Description
+	date, amount, category, desc := cur.Date, cur.AmountCents, cur.Category, cur.Description
 	if req.Date != nil {
 		date = *req.Date
 	}
-	if req.Amount != nil {
-		amount = *req.Amount
+	if req.AmountCents != nil {
+		amount = *req.AmountCents
 	}
 	if req.Category != nil {
 		category = *req.Category
@@ -301,13 +389,10 @@ func (db *DB) Update(ctx context.Context, id, userID int64, req *models.UpdateRe
 		desc = *req.Description
 	}
 
-	query := "UPDATE records SET date=?, amount=?, category=?, description=?, updated_at=CURRENT_TIMESTAMP WHERE id=?"
-	args := []interface{}{date, amount, category, desc, id}
-	if userID > 0 {
-		query += " AND (user_id = ? OR user_id IS NULL)"
-		args = append(args, userID)
-	}
-	res, err := tx.ExecContext(ctx, query, args...)
+	res, err := tx.ExecContext(ctx,
+		`UPDATE records SET date = ?, amount_cents = ?, category = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?`,
+		date, amount, category, desc, id, userID,
+	)
 	if err != nil {
 		return err
 	}
@@ -325,13 +410,7 @@ func (db *DB) Delete(ctx context.Context, id, userID int64) error {
 	if err := requireUserID(userID); err != nil {
 		return err
 	}
-	query := "DELETE FROM records WHERE id=?"
-	args := []interface{}{id}
-	if userID > 0 {
-		query += " AND (user_id = ? OR user_id IS NULL)"
-		args = append(args, userID)
-	}
-	res, err := db.conn.ExecContext(ctx, query, args...)
+	res, err := db.conn.ExecContext(ctx, `DELETE FROM records WHERE id = ? AND user_id = ?`, id, userID)
 	if err != nil {
 		return err
 	}

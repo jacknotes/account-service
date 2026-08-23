@@ -46,7 +46,7 @@ func TestAuth_ValidToken(t *testing.T) {
 	c.Request = httptest.NewRequest("GET", "/", nil)
 	c.Request.Header.Set("Authorization", "Bearer "+token)
 
-	Auth(secret)(c)
+	Auth(secret, nil)(c)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
 	}
@@ -69,7 +69,7 @@ func TestAuth_MissingHeader(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("GET", "/", nil)
 
-	Auth(secret)(c)
+	Auth(secret, nil)(c)
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", w.Code)
 	}
@@ -84,7 +84,7 @@ func TestAuth_InvalidToken(t *testing.T) {
 	c.Request = httptest.NewRequest("GET", "/", nil)
 	c.Request.Header.Set("Authorization", "Bearer invalidtoken")
 
-	Auth(secret)(c)
+	Auth(secret, nil)(c)
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", w.Code)
 	}
@@ -107,7 +107,7 @@ func TestAuth_ExpiredToken(t *testing.T) {
 	c.Request = httptest.NewRequest("GET", "/", nil)
 	c.Request.Header.Set("Authorization", "Bearer "+token)
 
-	Auth(secret)(c)
+	Auth(secret, nil)(c)
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", w.Code)
 	}
