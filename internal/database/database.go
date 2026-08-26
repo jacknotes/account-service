@@ -163,6 +163,21 @@ var migrations = []migration{
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 		},
 	},
+	{
+		version: "004_categories",
+		statements: []string{
+			`CREATE TABLE IF NOT EXISTS categories (
+				id BIGINT PRIMARY KEY AUTO_INCREMENT,
+				user_id BIGINT NOT NULL,
+				name VARCHAR(64) NOT NULL,
+				type VARCHAR(16) NOT NULL DEFAULT 'expense',
+				sort_order INT NOT NULL DEFAULT 0,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE KEY uk_user_cat (user_id, name, type),
+				CONSTRAINT fk_categories_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		},
+	},
 }
 
 func (db *DB) migrate() error {

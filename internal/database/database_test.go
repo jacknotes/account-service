@@ -140,6 +140,7 @@ func truncateAll(t *testing.T, db *DB) {
 		"TRUNCATE TABLE operation_logs",
 		"TRUNCATE TABLE login_logs",
 		"TRUNCATE TABLE records",
+		"TRUNCATE TABLE categories",
 		"TRUNCATE TABLE users",
 		"SET FOREIGN_KEY_CHECKS=1",
 	}
