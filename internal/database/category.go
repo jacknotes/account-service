@@ -3,7 +3,10 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+
+	"github.com/go-sql-driver/mysql"
 
 	"account-service/internal/models"
 	"account-service/internal/service"
@@ -37,13 +40,23 @@ func insertDefaultCategories(ctx context.Context, q execer, userID int64) error 
 const categoryColumns = "id, user_id, name, type, sort_order, created_at"
 
 // ListCategories 返回当前用户全部分类（按 type、sort_order、id 排序）。
-// 存量用户（无分类）首次访问时自动补插默认集合（幂等）。
+// 存量用户（已注册但无任何分类）首次访问时自动补插默认集合（幂等）。
 func (db *DB) ListCategories(ctx context.Context, userID int64) ([]*models.Category, error) {
 	if err := requireUserID(userID); err != nil {
 		return nil, err
 	}
-	if err := insertDefaultCategories(ctx, db.conn, userID); err != nil {
+	// 仅对「无任何分类」的用户补插默认集合（设计文档 §1.3）：
+	// 若无条件 INSERT IGNORE，已删除的默认分类会在下次拉取时复活。
+	var n int
+	if err := db.conn.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM categories WHERE user_id = ?`, userID,
+	).Scan(&n); err != nil {
 		return nil, err
+	}
+	if n == 0 {
+		if err := insertDefaultCategories(ctx, db.conn, userID); err != nil {
+			return nil, err
+		}
 	}
 	rows, err := db.conn.QueryContext(ctx,
 		`SELECT `+categoryColumns+` FROM categories WHERE user_id = ? ORDER BY type, sort_order, id`,
@@ -85,6 +98,11 @@ func (db *DB) CreateCategory(ctx context.Context, cat *models.Category, userID i
 		userID, cat.Name, cat.Type,
 	)
 	if err != nil {
+		// 并发下 COUNT 预检查可能同时通过，唯一键冲突兜底映射为域错误（409 而非 500）。
+		var me *mysql.MySQLError
+		if errors.As(err, &me) && me.Number == 1062 {
+			return service.ErrDuplicateCategory
+		}
 		return err
 	}
 	id, err := res.LastInsertId()
