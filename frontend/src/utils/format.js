@@ -24,12 +24,30 @@ export function yuanToCents(yuan) {
   return Math.round(n * 100)
 }
 
-// 今天 YYYY-MM-DD
-export function today() {
-  const d = new Date()
+// Date -> YYYY-MM-DD
+function fmtYMD(d) {
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
   return `${d.getFullYear()}-${m}-${day}`
+}
+
+// 今天 YYYY-MM-DD
+export function today() {
+  return fmtYMD(new Date())
+}
+
+// 某月范围 [月初, 月末]（YYYY-MM-DD）；默认当月
+export function monthRange(d = new Date()) {
+  return [
+    fmtYMD(new Date(d.getFullYear(), d.getMonth(), 1)),
+    fmtYMD(new Date(d.getFullYear(), d.getMonth() + 1, 0)),
+  ]
+}
+
+// 上月范围 [月初, 月末]
+export function prevMonthRange() {
+  const d = new Date()
+  return monthRange(new Date(d.getFullYear(), d.getMonth() - 1, 1))
 }
 
 export function fmtDate(s) {
