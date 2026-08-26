@@ -1,47 +1,42 @@
 <template>
   <div class="auth-page">
-    <div class="auth-card">
-      <h2>💰 记账本</h2>
+    <el-card class="auth-card" shadow="always">
+      <h2 class="gold-text" style="margin: 0 0 20px; text-align: center">💰 记账本</h2>
 
-      <form v-if="!showRegister" @submit.prevent="login">
-        <div class="form-row">
-          <label>用户名</label>
-          <input v-model.trim="form.username" autocomplete="username" />
-        </div>
-        <div class="form-row">
-          <label>密码</label>
-          <input v-model="form.password" type="password" autocomplete="current-password" />
-        </div>
-        <div v-if="needsTOTP" class="form-row">
-          <label>TOTP 验证码</label>
-          <input v-model="form.totp_code" inputmode="numeric" placeholder="6 位验证码" autocomplete="one-time-code" />
-        </div>
-        <button class="btn btn-primary" style="width: 100%" type="submit" :disabled="loading">
+      <el-form v-if="!showRegister" label-position="top" @submit.prevent="login">
+        <el-form-item label="用户名">
+          <el-input v-model.trim="form.username" autocomplete="username" placeholder="用户名" />
+        </el-form-item>
+        <el-form-item label="密码">
+          <el-input v-model="form.password" type="password" show-password autocomplete="current-password" placeholder="密码" @keyup.enter="login" />
+        </el-form-item>
+        <el-form-item v-if="needsTOTP" label="TOTP 验证码">
+          <el-input v-model="form.totp_code" placeholder="6 位验证码" inputmode="numeric" autocomplete="one-time-code" @keyup.enter="login" />
+        </el-form-item>
+        <el-button type="primary" native-type="submit" style="width: 100%" size="large" :loading="loading">
           {{ loading ? '登录中...' : '登录' }}
-        </button>
-        <div class="msg-error">{{ error }}</div>
-      </form>
+        </el-button>
+        <div class="msg-error" v-if="error">{{ error }}</div>
+      </el-form>
 
-      <form v-else @submit.prevent="register">
-        <div class="form-row">
-          <label>用户名（2~32 字符）</label>
-          <input v-model.trim="regForm.username" autocomplete="username" />
-        </div>
-        <div class="form-row">
-          <label>密码（8~72 位，含大小写字母、数字、特殊字符）</label>
-          <input v-model="regForm.password" type="password" autocomplete="new-password" />
-        </div>
-        <button class="btn btn-primary" style="width: 100%" type="submit" :disabled="loading">
+      <el-form v-else label-position="top" @submit.prevent="register">
+        <el-form-item label="用户名（2~32 字符）">
+          <el-input v-model.trim="regForm.username" autocomplete="username" />
+        </el-form-item>
+        <el-form-item label="密码（8~72 位，含大小写字母、数字、特殊字符）">
+          <el-input v-model="regForm.password" type="password" show-password autocomplete="new-password" @keyup.enter="register" />
+        </el-form-item>
+        <el-button type="primary" native-type="submit" style="width: 100%" size="large" :loading="loading">
           {{ loading ? '注册中...' : '注册并登录' }}
-        </button>
-        <div class="msg-error">{{ error }}</div>
-      </form>
+        </el-button>
+        <div class="msg-error" v-if="error">{{ error }}</div>
+      </el-form>
 
       <div class="auth-switch" v-if="showRegister || allowRegister">
         <span v-if="!showRegister">尚无账号？</span>
         <a @click="showRegister = !showRegister">{{ showRegister ? '返回登录' : '注册首个管理员账号' }}</a>
       </div>
-    </div>
+    </el-card>
   </div>
 </template>
 
