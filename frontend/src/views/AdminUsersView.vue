@@ -1,122 +1,99 @@
 <template>
-  <div>
-    <div class="card">
-      <div class="filter-bar">
-        <h3 style="margin: 0; flex: 1">用户管理</h3>
-        <button class="btn btn-primary" type="button" @click="openAdd">+ 添加用户</button>
-      </div>
-
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>用户名</th>
-              <th>角色</th>
-              <th>创建时间</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="!users.length">
-              <td class="empty" colspan="5">{{ loading ? '加载中...' : '暂无用户' }}</td>
-            </tr>
-            <tr v-for="u in users" :key="u.id">
-              <td class="num">{{ u.id }}</td>
-              <td>{{ u.username }}</td>
-              <td><span class="badge" :class="{ admin: u.role === 'admin' }">{{ u.role === 'admin' ? '管理员' : '用户' }}</span></td>
-              <td class="num">{{ (u.created_at || '').slice(0, 10) }}</td>
-              <td>
-                <div class="actions-inline">
-                  <button class="btn btn-sm" type="button" @click="openEdit(u)">编辑</button>
-                  <button class="btn btn-sm" type="button" @click="openChangePwd(u)">改密</button>
-                  <button class="btn btn-sm btn-danger" type="button" @click="askDelete(u)">删除</button>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+  <div class="card">
+    <div class="page-head">
+      <h3>用户管理</h3>
+      <el-button type="primary" @click="openAdd">＋ 添加用户</el-button>
     </div>
 
-    <!-- 添加 -->
-    <Modal v-model="addOpen" title="添加用户">
-      <div class="form-row">
-        <label>用户名（2~32 字符）</label>
-        <input v-model="addForm.username" />
-      </div>
-      <div class="form-row">
-        <label>密码（8~72 位，含大小写字母、数字、特殊字符）</label>
-        <input v-model="addForm.password" type="password" />
-      </div>
-      <div class="form-row">
-        <label>角色</label>
-        <select v-model="addForm.role">
-          <option value="user">用户</option>
-          <option value="admin">管理员</option>
-        </select>
-      </div>
-      <div class="msg-error">{{ error }}</div>
-      <template #footer>
-        <button class="btn" type="button" @click="addOpen = false">取消</button>
-        <button class="btn btn-primary" type="button" :disabled="saving" @click="addUser">{{ saving ? '保存中...' : '添加' }}</button>
-      </template>
-    </Modal>
-
-    <!-- 编辑 -->
-    <Modal v-model="editOpen" title="编辑用户">
-      <div class="form-row">
-        <label>用户名</label>
-        <input v-model="editForm.username" />
-      </div>
-      <div class="form-row">
-        <label>角色</label>
-        <select v-model="editForm.role">
-          <option value="user">用户</option>
-          <option value="admin">管理员</option>
-        </select>
-      </div>
-      <div class="msg-error">{{ error }}</div>
-      <template #footer>
-        <button class="btn" type="button" @click="editOpen = false">取消</button>
-        <button class="btn btn-primary" type="button" :disabled="saving" @click="updateUser">保存</button>
-      </template>
-    </Modal>
-
-    <!-- 改密 -->
-    <Modal v-model="pwdOpen" :title="'修改用户密码：' + (pwdTarget?.username || '')">
-      <div class="form-row">
-        <label>新密码（8~72 位，含大小写字母、数字、特殊字符）</label>
-        <input v-model="pwdForm.password" type="password" />
-      </div>
-      <div class="msg-error">{{ error }}</div>
-      <template #footer>
-        <button class="btn" type="button" @click="pwdOpen = false">取消</button>
-        <button class="btn btn-primary" type="button" :disabled="saving" @click="changePwd">确认</button>
-      </template>
-    </Modal>
-
-    <!-- 删除确认 -->
-    <Modal v-model="delOpen" title="删除用户">
-      <p>删除用户将级联删除其全部记账记录，此操作不可撤销！</p>
-      <template #footer>
-        <button class="btn" type="button" @click="delOpen = false">取消</button>
-        <button class="btn btn-danger" type="button" :disabled="deleting" @click="doDelete">删除</button>
-      </template>
-    </Modal>
+    <el-table :data="users" v-loading="loading" empty-text="暂无用户">
+      <el-table-column prop="id" label="ID" width="70" />
+      <el-table-column prop="username" label="用户名" />
+      <el-table-column label="角色" width="110">
+        <template #default="{ row }">
+          <el-tag :type="row.role === 'admin' ? 'warning' : 'info'" effect="dark" size="small">
+            {{ row.role === 'admin' ? '管理员' : '用户' }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="创建时间" width="130">
+        <template #default="{ row }">{{ (row.created_at || '').slice(0, 10) }}</template>
+      </el-table-column>
+      <el-table-column label="操作" width="200">
+        <template #default="{ row }">
+          <el-button size="small" text @click="openEdit(row)">编辑</el-button>
+          <el-button size="small" text @click="openChangePwd(row)">改密</el-button>
+          <el-button size="small" text type="danger" @click="askDelete(row)">删除</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
   </div>
+
+  <!-- 添加用户 -->
+  <el-dialog v-model="addOpen" title="添加用户" width="420px">
+    <el-form label-width="70px">
+      <el-form-item label="用户名">
+        <el-input v-model="addForm.username" placeholder="2~32 字符" />
+      </el-form-item>
+      <el-form-item label="密码">
+        <el-input v-model="addForm.password" type="password" show-password placeholder="8~72 位，含大小写字母、数字、特殊字符" />
+      </el-form-item>
+      <el-form-item label="角色">
+        <el-radio-group v-model="addForm.role">
+          <el-radio value="user">用户</el-radio>
+          <el-radio value="admin">管理员</el-radio>
+        </el-radio-group>
+      </el-form-item>
+    </el-form>
+    <div class="msg-error" v-if="error">{{ error }}</div>
+    <template #footer>
+      <el-button @click="addOpen = false">取消</el-button>
+      <el-button type="primary" :loading="saving" @click="addUser">添加</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 编辑用户 -->
+  <el-dialog v-model="editOpen" title="编辑用户" width="420px">
+    <el-form label-width="70px">
+      <el-form-item label="用户名">
+        <el-input v-model="editForm.username" />
+      </el-form-item>
+      <el-form-item label="角色">
+        <el-radio-group v-model="editForm.role">
+          <el-radio value="user">用户</el-radio>
+          <el-radio value="admin">管理员</el-radio>
+        </el-radio-group>
+      </el-form-item>
+    </el-form>
+    <div class="msg-error" v-if="error">{{ error }}</div>
+    <template #footer>
+      <el-button @click="editOpen = false">取消</el-button>
+      <el-button type="primary" :loading="saving" @click="updateUser">保存</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 修改用户密码 -->
+  <el-dialog v-model="pwdOpen" :title="'修改用户密码：' + (pwdTarget?.username || '')" width="420px">
+    <el-form label-width="70px">
+      <el-form-item label="新密码">
+        <el-input v-model="pwdForm.password" type="password" show-password placeholder="8~72 位，含大小写字母、数字、特殊字符" />
+      </el-form-item>
+    </el-form>
+    <div class="msg-error" v-if="error">{{ error }}</div>
+    <template #footer>
+      <el-button @click="pwdOpen = false">取消</el-button>
+      <el-button type="primary" :loading="saving" @click="changePwd">确认</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import Modal from '../components/Modal.vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api/http'
-import { getUser } from '../api/auth'
 
 const users = ref([])
 const loading = ref(false)
 const saving = ref(false)
-const deleting = ref(false)
 const error = ref('')
 
 const addOpen = ref(false)
@@ -126,10 +103,6 @@ const editForm = reactive({ id: null, username: '', role: 'user' })
 const pwdOpen = ref(false)
 const pwdTarget = ref(null)
 const pwdForm = reactive({ password: '' })
-const delOpen = ref(false)
-const delTarget = ref(null)
-
-const me = getUser()
 
 async function load() {
   loading.value = true
@@ -137,7 +110,7 @@ async function load() {
     const data = await api('/api/auth/users')
     users.value = data.data || []
   } catch (e) {
-    error.value = e.message
+    ElMessage.error(e.message)
   } finally {
     loading.value = false
   }
@@ -171,6 +144,7 @@ async function addUser() {
   try {
     await api('/api/auth/users', { method: 'POST', body: JSON.stringify(addForm) })
     addOpen.value = false
+    ElMessage.success('用户已添加')
     await load()
   } catch (err) {
     error.value = err.message
@@ -196,6 +170,7 @@ async function updateUser() {
       body: JSON.stringify({ username: editForm.username, role: editForm.role }),
     })
     editOpen.value = false
+    ElMessage.success('已更新')
     await load()
   } catch (err) {
     error.value = err.message
@@ -225,6 +200,7 @@ async function changePwd() {
       body: JSON.stringify({ password: pwdForm.password }),
     })
     pwdOpen.value = false
+    ElMessage.success('密码已修改')
   } catch (err) {
     error.value = err.message
   } finally {
@@ -232,21 +208,22 @@ async function changePwd() {
   }
 }
 
-function askDelete(u) {
-  delTarget.value = u
-  delOpen.value = true
-}
-
-async function doDelete() {
-  deleting.value = true
+async function askDelete(u) {
   try {
-    await api('/api/auth/users/' + delTarget.value.id, { method: 'DELETE' })
-    delOpen.value = false
+    await ElMessageBox.confirm('删除用户将级联删除其全部记账记录，此操作不可撤销！', '删除用户', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  try {
+    await api('/api/auth/users/' + u.id, { method: 'DELETE' })
+    ElMessage.success('已删除')
     await load()
   } catch (err) {
-    alert(err.message)
-  } finally {
-    deleting.value = false
+    ElMessage.error(err.message)
   }
 }
 
