@@ -228,6 +228,10 @@ func TestListRecords_KeywordSpecialChars(t *testing.T) {
 		{Date: "2024-01-02", AmountCents: -200, Category: "交通", Description: "a_b 地铁"},
 		{Date: "2024-01-03", AmountCents: -300, Category: "购物", Description: `C:\path 购物`},
 		{Date: "2024-01-04", AmountCents: -400, Category: "餐饮", Description: "普通晚餐"},
+		// 干扰行：不含字面 "100%"，若 % 未逃逸会被 pattern %100%% 误匹配
+		{Date: "2024-01-05", AmountCents: -500, Category: "餐饮", Description: "报销 100 元"},
+		// 干扰行：不含字面 "a_b"，若 _ 未逃逸会被 pattern %a_b% 当单字符通配符误匹配
+		{Date: "2024-01-06", AmountCents: -600, Category: "交通", Description: "axb 公交"},
 	}
 	for _, r := range recs {
 		if err := db.Create(ctx, r, uid); err != nil {
