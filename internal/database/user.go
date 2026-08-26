@@ -43,7 +43,13 @@ func (db *DB) CreateUser(ctx context.Context, u *models.User, passwordHash strin
 	if role == "" {
 		role = models.RoleUser
 	}
-	res, err := db.conn.ExecContext(ctx,
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx,
 		`INSERT INTO users (username, role, password_hash, totp_secret) VALUES (?, ?, ?, ?)`,
 		u.Username, role, passwordHash, u.TOTPSecret,
 	)
@@ -55,7 +61,10 @@ func (db *DB) CreateUser(ctx context.Context, u *models.User, passwordHash strin
 		return fmt.Errorf("failed to get last insert id: %w", err)
 	}
 	u.ID = id
-	return nil
+	if err := insertDefaultCategories(ctx, tx, u.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (db *DB) UpdateUserPassword(ctx context.Context, id int64, passwordHash string) error {
@@ -75,7 +84,13 @@ func (db *DB) CreateFirstUser(ctx context.Context, u *models.User, passwordHash 
 	if role == "" {
 		role = models.RoleUser
 	}
-	res, err := db.conn.ExecContext(ctx,
+	tx, err := db.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx,
 		`INSERT INTO users (username, role, password_hash, totp_secret)
 		 SELECT ?, ?, ?, ?
 		 WHERE (SELECT COUNT(*) FROM users) = 0`,
@@ -96,7 +111,10 @@ func (db *DB) CreateFirstUser(ctx context.Context, u *models.User, passwordHash 
 		return fmt.Errorf("failed to get last insert id: %w", err)
 	}
 	u.ID = id
-	return nil
+	if err := insertDefaultCategories(ctx, tx, u.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (db *DB) UserCount(ctx context.Context) (int, error) {

@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"account-service/internal/models"
@@ -17,6 +18,13 @@ type RecordService interface {
 	List(ctx context.Context, params *models.QueryParams, userID int64) ([]*models.Record, int64, error)
 	Update(ctx context.Context, id, userID int64, req *models.UpdateRecordRequest) error
 	Delete(ctx context.Context, id, userID int64) error
+}
+
+// CategoryService 定义记账分类管理操作。
+type CategoryService interface {
+	ListCategories(ctx context.Context, userID int64) ([]*models.Category, error)
+	CreateCategory(ctx context.Context, cat *models.Category, userID int64) error
+	DeleteCategory(ctx context.Context, id, userID int64) error
 }
 
 // SummaryService 定义汇总与报表查询。
@@ -73,18 +81,23 @@ type OperationLogEntry struct {
 	CreatedAt  string `json:"created_at"`
 }
 
+// ErrDuplicateCategory 表示同一用户同一类型下已存在同名分类。
+var ErrDuplicateCategory = errors.New("duplicate category")
+
 // 操作类型常量（全项目唯一来源）。
 const (
-	OpLogin        = "login"
-	OpCreateRecord = "create_record"
-	OpUpdateRecord = "update_record"
-	OpDeleteRecord = "delete_record"
-	OpAddUser      = "add_user"
-	OpUpdateUser   = "update_user"
-	OpDeleteUser   = "delete_user"
-	OpChangePwd    = "change_password"
-	OpTOTPEnable   = "totp_enable"
-	OpTOTPDisable  = "totp_disable"
-	OpLogout       = "logout"
-	OpRefresh      = "refresh"
+	OpLogin          = "login"
+	OpCreateRecord   = "create_record"
+	OpUpdateRecord   = "update_record"
+	OpDeleteRecord   = "delete_record"
+	OpCreateCategory = "create_category"
+	OpDeleteCategory = "delete_category"
+	OpAddUser        = "add_user"
+	OpUpdateUser     = "update_user"
+	OpDeleteUser     = "delete_user"
+	OpChangePwd      = "change_password"
+	OpTOTPEnable     = "totp_enable"
+	OpTOTPDisable    = "totp_disable"
+	OpLogout         = "logout"
+	OpRefresh        = "refresh"
 )
