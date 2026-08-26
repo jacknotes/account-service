@@ -265,6 +265,44 @@ func (f *fakeOpLogService) ListOperationLogs(_ context.Context, _ int, _ int, _ 
 	return nil, 0, nil
 }
 
+type fakeCategoryService struct {
+	cats   map[int64]*models.Category
+	nextID int64
+}
+
+func newFakeCategoryService() *fakeCategoryService {
+	return &fakeCategoryService{cats: make(map[int64]*models.Category), nextID: 1}
+}
+
+func (f *fakeCategoryService) ListCategories(_ context.Context, _ int64) ([]*models.Category, error) {
+	var list []*models.Category
+	for _, c := range f.cats {
+		list = append(list, c)
+	}
+	return list, nil
+}
+
+func (f *fakeCategoryService) CreateCategory(_ context.Context, cat *models.Category, userID int64) error {
+	for _, c := range f.cats {
+		if c.UserID == userID && c.Name == cat.Name && c.Type == cat.Type {
+			return service.ErrDuplicateCategory
+		}
+	}
+	cat.ID = f.nextID
+	cat.UserID = userID
+	f.cats[cat.ID] = cat
+	f.nextID++
+	return nil
+}
+
+func (f *fakeCategoryService) DeleteCategory(_ context.Context, id, _ int64) error {
+	if _, ok := f.cats[id]; !ok {
+		return sql.ErrNoRows
+	}
+	delete(f.cats, id)
+	return nil
+}
+
 // ----------------------------------------------------------------------
 // 测试辅助
 // ----------------------------------------------------------------------
@@ -373,6 +411,69 @@ func TestRecordHandler_Update_Delete_NotFound(t *testing.T) {
 	rh.DeleteRecord(c)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("delete status = %d, want 404", w.Code)
+	}
+}
+
+// ----------------------------------------------------------------------
+// category handler
+// ----------------------------------------------------------------------
+
+func TestCategoryHandler_CreateAndList(t *testing.T) {
+	ch := NewCategoryHandler(newFakeCategoryService(), &fakeOpLogService{})
+	w := perform(ch.CreateCategory, "POST", "/api/categories", `{"name":"宠物","type":"expense"}`, setupAuthContext(1, "u", "user"))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201, body: %s", w.Code, w.Body.String())
+	}
+	w = perform(ch.ListCategories, "GET", "/api/categories", "", setupAuthContext(1, "u", "user"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "宠物") {
+		t.Errorf("list should contain 宠物: %s", w.Body.String())
+	}
+}
+
+func TestCategoryHandler_Create_Duplicate(t *testing.T) {
+	ch := NewCategoryHandler(newFakeCategoryService(), &fakeOpLogService{})
+	perform(ch.CreateCategory, "POST", "/api/categories", `{"name":"餐饮","type":"expense"}`, setupAuthContext(1, "u", "user"))
+	w := perform(ch.CreateCategory, "POST", "/api/categories", `{"name":"餐饮","type":"expense"}`, setupAuthContext(1, "u", "user"))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "分类已存在") {
+		t.Errorf("body should contain 分类已存在: %s", w.Body.String())
+	}
+}
+
+func TestCategoryHandler_Create_Invalid(t *testing.T) {
+	ch := NewCategoryHandler(newFakeCategoryService(), &fakeOpLogService{})
+	// 非法 type
+	w := perform(ch.CreateCategory, "POST", "/api/categories", `{"name":"x","type":"other"}`, setupAuthContext(1, "u", "user"))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("bad type status = %d, want 400", w.Code)
+	}
+	// 空名称
+	w = perform(ch.CreateCategory, "POST", "/api/categories", `{"name":"  ","type":"expense"}`, setupAuthContext(1, "u", "user"))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("blank name status = %d, want 400", w.Code)
+	}
+	// 名称超长（65 个字符）
+	w = perform(ch.CreateCategory, "POST", "/api/categories", `{"name":"`+strings.Repeat("猫", 65)+`","type":"expense"}`, setupAuthContext(1, "u", "user"))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("long name status = %d, want 400", w.Code)
+	}
+}
+
+func TestCategoryHandler_Delete_NotFound(t *testing.T) {
+	ch := NewCategoryHandler(newFakeCategoryService(), &fakeOpLogService{})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("DELETE", "/api/categories/999", nil)
+	c.Params = gin.Params{{Key: "id", Value: "999"}}
+	setupAuthContext(1, "u", "user")(c)
+	ch.DeleteCategory(c)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404, body: %s", w.Code, w.Body.String())
 	}
 }
 
