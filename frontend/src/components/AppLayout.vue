@@ -113,6 +113,7 @@ const nav = [
   { path: '/records', title: '记账' },
   { path: '/summary', title: '汇总' },
   { path: '/report', title: '报表' },
+  { path: '/categories', title: '分类' },
   { path: '/users', title: '用户管理', admin: true },
   { path: '/logs', title: '操作日志', admin: true },
 ]
