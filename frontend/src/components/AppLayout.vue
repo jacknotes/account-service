@@ -1,24 +1,29 @@
 <template>
   <div class="layout">
     <aside class="sidebar">
-      <div class="brand">💰 记账本</div>
-      <nav>
-        <RouterLink v-for="r in navRoutes" :key="r.path" :to="r.path">{{ r.title }}</RouterLink>
-      </nav>
-      <div class="side-foot">v1.0 · Vue3 + Go</div>
+      <div class="brand gold-text">💰 记账本</div>
+      <el-menu :default-active="route.path" router class="side-menu">
+        <el-menu-item v-for="n in navRoutes" :key="n.path" :index="n.path">{{ n.title }}</el-menu-item>
+      </el-menu>
+      <div class="side-foot">v2.0 · Vue3 + Go</div>
     </aside>
 
     <div class="main">
       <header class="topbar">
-        <h1>{{ currentTitle }}</h1>
-        <div class="actions">
-          <button class="btn" type="button" @click="toggleTheme">
-            {{ isLight ? '☀️ 浅色' : '🌙 深色' }}
-          </button>
-          <button class="btn" type="button" @click="openPassword">修改密码</button>
-          <button class="btn" type="button" @click="openTOTP">TOTP</button>
+        <div class="topbar-left">
+          <button class="hamburger" type="button" aria-label="菜单" @click="drawerOpen = true">☰</button>
+          <h1>{{ currentTitle }}</h1>
+        </div>
+        <div class="actions desktop-actions">
+          <el-button size="small" @click="toggleTheme">{{ isLight ? '☀️ 浅色' : '🌙 深色' }}</el-button>
+          <el-button size="small" @click="openPassword">修改密码</el-button>
+          <el-button size="small" @click="openTOTP">TOTP</el-button>
           <span class="user-chip">{{ user?.username }} · {{ user?.role === 'admin' ? '管理员' : '用户' }}</span>
-          <button class="btn btn-danger" type="button" @click="doLogout">退出</button>
+          <el-button size="small" type="danger" plain @click="doLogout">退出</el-button>
+        </div>
+        <div class="actions mobile-actions">
+          <span class="user-chip">{{ user?.username }}</span>
+          <el-button size="small" type="danger" plain @click="doLogout">退出</el-button>
         </div>
       </header>
 
@@ -27,65 +32,77 @@
       </main>
     </div>
 
+    <!-- 移动端抽屉导航 -->
+    <el-drawer v-model="drawerOpen" direction="ltr" size="72%" title="💰 记账本">
+      <el-menu :default-active="route.path" router class="side-menu" @select="drawerOpen = false">
+        <el-menu-item v-for="n in navRoutes" :key="n.path" :index="n.path">{{ n.title }}</el-menu-item>
+      </el-menu>
+      <div class="drawer-actions">
+        <el-button @click="toggleTheme">{{ isLight ? '☀️ 浅色' : '🌙 深色' }}</el-button>
+        <el-button @click="openPassword">修改密码</el-button>
+        <el-button @click="openTOTP">TOTP</el-button>
+      </div>
+    </el-drawer>
+
     <!-- 修改密码 -->
-    <Modal v-model="pwdOpen" title="修改密码">
-      <div class="form-row">
-        <label>当前密码</label>
-        <input v-model="pwdForm.old_password" type="password" autocomplete="current-password" />
-      </div>
-      <div class="form-row">
-        <label>新密码（8~72 位，含大小写字母、数字、特殊字符）</label>
-        <input v-model="pwdForm.new_password" type="password" autocomplete="new-password" />
-      </div>
-      <div class="msg-error">{{ pwdError }}</div>
+    <el-dialog v-model="pwdOpen" title="修改密码" width="420px">
+      <el-form label-width="90px">
+        <el-form-item label="当前密码">
+          <el-input v-model="pwdForm.old_password" type="password" show-password autocomplete="current-password" />
+        </el-form-item>
+        <el-form-item label="新密码">
+          <el-input v-model="pwdForm.new_password" type="password" show-password autocomplete="new-password" placeholder="8~72 位，含大小写字母、数字、特殊字符" />
+        </el-form-item>
+      </el-form>
+      <div class="msg-error" v-if="pwdError">{{ pwdError }}</div>
       <div class="msg-ok" v-if="pwdOk">{{ pwdOk }}</div>
       <template #footer>
-        <button class="btn" type="button" @click="pwdOpen = false">取消</button>
-        <button class="btn btn-primary" type="button" :disabled="pwdLoading" @click="changePassword">确认修改</button>
+        <el-button @click="pwdOpen = false">取消</el-button>
+        <el-button type="primary" :loading="pwdLoading" @click="changePassword">确认修改</el-button>
       </template>
-    </Modal>
+    </el-dialog>
 
     <!-- TOTP 设置 -->
-    <Modal v-model="totpOpen" :title="user?.totp_enabled ? '关闭 TOTP' : '启用 TOTP'">
+    <el-dialog v-model="totpOpen" :title="user?.totp_enabled ? '关闭 TOTP' : '启用 TOTP'" width="420px">
       <template v-if="!user?.totp_enabled">
         <div v-if="totpSetup">
           <p>请用身份验证器 App 扫描二维码或手动输入密钥：</p>
           <div class="qr-box"><img :src="totpQr" alt="TOTP 二维码" /></div>
           <div class="totp-secret">{{ totpSetup.secret }}</div>
-          <div class="form-row" style="margin-top: 12px">
-            <label>验证码</label>
-            <input v-model="totpCode" placeholder="6 位验证码" inputmode="numeric" />
-          </div>
+          <el-form label-width="70px" style="margin-top: 12px">
+            <el-form-item label="验证码">
+              <el-input v-model="totpCode" placeholder="6 位验证码" inputmode="numeric" />
+            </el-form-item>
+          </el-form>
         </div>
-        <div class="msg-error">{{ totpError }}</div>
+        <div class="msg-error" v-if="totpError">{{ totpError }}</div>
         <div class="msg-ok" v-if="totpOk">{{ totpOk }}</div>
       </template>
       <template v-else>
         <p>关闭 TOTP 需要验证当前密码与验证码：</p>
-        <div class="form-row">
-          <label>当前密码</label>
-          <input v-model="totpDisablePwd" type="password" />
-        </div>
-        <div class="form-row">
-          <label>验证码</label>
-          <input v-model="totpCode" placeholder="6 位验证码" inputmode="numeric" />
-        </div>
-        <div class="msg-error">{{ totpError }}</div>
+        <el-form label-width="70px">
+          <el-form-item label="当前密码">
+            <el-input v-model="totpDisablePwd" type="password" show-password />
+          </el-form-item>
+          <el-form-item label="验证码">
+            <el-input v-model="totpCode" placeholder="6 位验证码" inputmode="numeric" />
+          </el-form-item>
+        </el-form>
+        <div class="msg-error" v-if="totpError">{{ totpError }}</div>
         <div class="msg-ok" v-if="totpOk">{{ totpOk }}</div>
       </template>
       <template #footer>
-        <button class="btn" type="button" @click="totpOpen = false">取消</button>
-        <button v-if="!user?.totp_enabled" class="btn btn-primary" type="button" :disabled="!totpCode" @click="enableTOTP">启用</button>
-        <button v-else class="btn btn-danger" type="button" :disabled="!totpCode || !totpDisablePwd" @click="disableTOTP">关闭</button>
+        <el-button @click="totpOpen = false">取消</el-button>
+        <el-button v-if="!user?.totp_enabled" type="primary" :disabled="!totpCode" @click="enableTOTP">启用</el-button>
+        <el-button v-else type="danger" plain :disabled="!totpCode || !totpDisablePwd" @click="disableTOTP">关闭</el-button>
       </template>
-    </Modal>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import Modal from './Modal.vue'
 import { api, apiFetch } from '../api/http'
 import { getUser, setUser, clearSession, getRefreshToken } from '../api/auth'
 
@@ -103,10 +120,12 @@ const navRoutes = computed(() => nav.filter((n) => !n.admin || getUser()?.role =
 const currentTitle = computed(() => (route.meta && route.meta.title) || '')
 
 const user = ref(getUser())
+const drawerOpen = ref(false)
 
-// 主题
+// 主题（默认深色；同时驱动 Element Plus 的 html.dark）
 const isLight = ref(localStorage.getItem('theme') === 'light')
 function applyTheme() {
+  document.documentElement.classList.toggle('dark', !isLight.value)
   document.body.classList.toggle('theme-light', isLight.value)
 }
 function toggleTheme() {

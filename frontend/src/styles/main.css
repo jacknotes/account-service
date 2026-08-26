@@ -562,19 +562,14 @@ body.theme-light .form-row input[type='date'] {
   font-size: 13px;
 }
 
-@media (max-width: 720px) {
-  .sidebar {
-    width: 64px;
-    padding: 12px 6px;
-  }
-  .sidebar .brand,
-  .sidebar nav a span,
-  .side-foot {
-    display: none;
-  }
-  .content {
-    padding: 12px;
-  }
+/* ---------- 布局响应式：≥1024 完整侧边栏；768~1023 窄侧边栏；<768 抽屉 ---------- */
+@media (max-width: 1023px) {
+  .sidebar { width: 160px; }
+}
+@media (max-width: 767px) {
+  .sidebar { display: none; }
+  .topbar { padding: 0 12px; }
+  .content { padding: 12px; }
 }
 
 /* ---------- 风格 C 新增工具类（旧组件样式在全部页面迁移后统一清理） ---------- */
