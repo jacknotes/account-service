@@ -580,14 +580,14 @@ body.theme-light .form-row input[type='date'] {
 /* ---------- 风格 C 新增工具类（旧组件样式在全部页面迁移后统一清理） ---------- */
 
 /* 金色渐变按钮（覆盖 el-button--primary） */
-.el-button--primary {
+.el-button--primary:not(.is-text):not(.is-plain):not(.is-link):not(.is-disabled) {
   background: var(--gold-gradient);
   border: none;
   color: #14140a;
   font-weight: 600;
 }
-.el-button--primary:hover,
-.el-button--primary:focus {
+.el-button--primary:not(.is-text):not(.is-plain):not(.is-link):not(.is-disabled):hover,
+.el-button--primary:not(.is-text):not(.is-plain):not(.is-link):not(.is-disabled):focus {
   background: linear-gradient(135deg, #f7d47f, #f0a52e);
   color: #14140a;
 }
