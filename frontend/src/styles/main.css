@@ -1,32 +1,38 @@
 :root {
-  --bg: #0f0f12;
-  --bg-elev: #1a1a20;
-  --bg-input: #232329;
-  --border: #2e2e38;
+  --gold: #f5c451;
+  --gold-deep: #e8930c;
+  --gold-gradient: linear-gradient(135deg, #f5c451, #e8930c);
+  --bg: #0c0c10;
+  --bg-elev: #121218;
+  --bg-input: #1a1a24;
+  --border: #2e2e3c;
   --text: #e8e8ee;
-  --text-dim: #9a9aa6;
-  --accent: #4c8dff;
-  --accent-hover: #3a74d6;
-  --danger: #e5534b;
-  --success: #3fb950;
-  --income: #3fb950;
-  --expense: #e5534b;
+  --text-dim: #8b8b98;
+  --accent: #f5c451;
+  --accent-hover: #e8930c;
+  --danger: #ff7b72;
+  --success: #3fd98a;
+  --income: #3fd98a;
+  --expense: #ff7b72;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
-  --radius: 10px;
+  --radius: 12px;
 }
 
 body.theme-light {
-  --bg: #f4f5f7;
+  --gold: #d99a17;
+  --gold-deep: #b57f10;
+  --gold-gradient: linear-gradient(135deg, #e3b04b, #d99a17);
+  --bg: #ececef;
   --bg-elev: #ffffff;
   --bg-input: #f0f1f4;
   --border: #dcdfe6;
   --text: #1d1d24;
   --text-dim: #6b6b78;
-  --accent: #2f6fe4;
-  --accent-hover: #2559bb;
+  --accent: #d99a17;
+  --accent-hover: #b57f10;
   --danger: #d6453d;
-  --success: #2c9e44;
-  --income: #2c9e44;
+  --success: #1f9e63;
+  --income: #1f9e63;
   --expense: #d6453d;
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 }
@@ -296,8 +302,9 @@ td.empty {
   font-size: 13px;
 }
 
-input,
-select {
+/* 仅作用于旧页面的表单行（Element Plus 输入框不受影响） */
+.form-row input,
+.form-row select {
   width: 100%;
   padding: 9px 12px;
   border: 1px solid var(--border);
@@ -308,16 +315,16 @@ select {
   outline: none;
 }
 
-input:focus,
-select:focus {
+.form-row input:focus,
+.form-row select:focus {
   border-color: var(--accent);
 }
 
-input[type='date'] {
+.form-row input[type='date'] {
   color-scheme: dark;
 }
 
-body.theme-light input[type='date'] {
+body.theme-light .form-row input[type='date'] {
   color-scheme: light;
 }
 
@@ -568,4 +575,65 @@ body.theme-light input[type='date'] {
   .content {
     padding: 12px;
   }
+}
+
+/* ---------- 风格 C 新增工具类（旧组件样式在全部页面迁移后统一清理） ---------- */
+
+/* 金色渐变按钮（覆盖 el-button--primary） */
+.el-button--primary {
+  background: var(--gold-gradient);
+  border: none;
+  color: #14140a;
+  font-weight: 600;
+}
+.el-button--primary:hover,
+.el-button--primary:focus {
+  background: linear-gradient(135deg, #f7d47f, #f0a52e);
+  color: #14140a;
+}
+
+/* 金色渐变文字 */
+.gold-text {
+  background: var(--gold-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* 金额配色 */
+.pos { color: var(--income); }
+.neg { color: var(--expense); }
+
+/* 页头 */
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.page-head h3 { margin: 0; font-size: 16px; }
+
+/* 侧边栏 el-menu（金色高亮） */
+.side-menu { border-right: none; background: transparent; }
+.side-menu .el-menu-item { color: var(--text-dim); border-radius: 8px; margin: 4px 8px; height: 44px; line-height: 44px; }
+.side-menu .el-menu-item:hover { background: var(--bg-input); color: var(--text); }
+.side-menu .el-menu-item.is-active { background: var(--gold-gradient); color: #14140a; font-weight: 600; }
+
+/* 顶栏左区（汉堡 + 标题） */
+.topbar-left { display: flex; align-items: center; gap: 10px; }
+
+/* 汉堡按钮（仅移动端显示） */
+.hamburger { display: none; background: none; border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 16px; width: 40px; height: 40px; cursor: pointer; }
+
+/* 抽屉内操作区 */
+.drawer-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+
+/* 图表容器 */
+.chart-box { width: 100%; height: 320px; }
+.mini-chart { width: 100%; height: 220px; margin-bottom: 12px; }
+
+/* 分页 */
+.pager { margin-top: 14px; display: flex; justify-content: flex-end; }
+
+@media (max-width: 767px) {
+  .hamburger { display: inline-flex; align-items: center; justify-content: center; }
+  .desktop-actions { display: none; }
+}
+@media (min-width: 768px) {
+  .mobile-actions { display: none; }
 }

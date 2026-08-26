@@ -1,0 +1,46 @@
+/* 风格 C「深色高级感」：深色底 + 金色渐变点缀。
+   Element Plus 暗色变量（html.dark 为默认主题）。 */
+html.dark {
+  --el-color-primary: #f5c451;
+  --el-color-primary-light-3: color-mix(in srgb, #f5c451 70%, #0c0c10);
+  --el-color-primary-light-5: color-mix(in srgb, #f5c451 50%, #0c0c10);
+  --el-color-primary-light-7: color-mix(in srgb, #f5c451 30%, #0c0c10);
+  --el-color-primary-light-8: color-mix(in srgb, #f5c451 20%, #0c0c10);
+  --el-color-primary-light-9: color-mix(in srgb, #f5c451 10%, #0c0c10);
+  --el-color-primary-dark-2: color-mix(in srgb, #f5c451 80%, #000000);
+  --el-bg-color: #0c0c10;
+  --el-bg-color-overlay: #16161e;
+  --el-bg-color-page: #0c0c10;
+  --el-fill-color-blank: #121218;
+  --el-fill-color-light: #1a1a24;
+  --el-fill-color: #1e1e28;
+  --el-border-color: #2e2e3c;
+  --el-border-color-light: #2e2e3c;
+  --el-border-color-lighter: #23232e;
+  --el-text-color-primary: #e8e8ee;
+  --el-text-color-regular: #c8c8d4;
+  --el-text-color-secondary: #8b8b98;
+  --el-text-color-placeholder: #6b6b78;
+  --el-success-color: #3fd98a;
+  --el-danger-color: #ff7b72;
+  --el-box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
+  --el-box-shadow-light: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
+
+/* 浅色辅助主题（保留主题切换能力） */
+html:not(.dark) {
+  --el-color-primary: #d99a17;
+  --el-color-primary-light-3: #e3b04b;
+  --el-color-primary-light-5: #ecc478;
+  --el-color-primary-light-7: #f4d9a8;
+  --el-color-primary-light-8: #f8e4c0;
+  --el-color-primary-light-9: #fbefdc;
+  --el-color-primary-dark-2: #b57f10;
+  --el-bg-color: #f5f5f8;
+  --el-bg-color-page: #ececef;
+  --el-fill-color-blank: #ffffff;
+  --el-border-color: #dcdfe6;
+  --el-text-color-primary: #1d1d24;
+  --el-text-color-regular: #3a3a44;
+  --el-text-color-secondary: #6b6b78;
+}

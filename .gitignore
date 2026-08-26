@@ -33,5 +33,9 @@ build/
 frontend/node_modules/
 frontend/dist/
 
+# unplugin 自动产物（纯 JS 项目无需提交）
+frontend/auto-imports.d.ts
+frontend/components.d.ts
+
 # 头脑风暴视觉伴侣会话文件
 .superpowers/
