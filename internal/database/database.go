@@ -318,7 +318,9 @@ func (db *DB) List(ctx context.Context, params *models.QueryParams, userID int64
 		args = append(args, params.EndDate)
 	}
 	if params.Keyword != "" {
-		where += " AND (description LIKE ? ESCAPE '\\' OR category LIKE ? ESCAPE '\\')"
+		// 注意必须用原始字符串：双引号写法会把 \\ 折叠成单个 \，
+		// MySQL 收到 ESCAPE '\' 后语句残缺，触发 Error 1064（关键字搜索 500 的根因）。
+		where += ` AND (description LIKE ? ESCAPE '\\' OR category LIKE ? ESCAPE '\\')`
 		kw := "%" + escapeLike(params.Keyword) + "%"
 		args = append(args, kw, kw)
 	}

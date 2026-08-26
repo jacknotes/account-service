@@ -218,6 +218,56 @@ func TestListRecords_FilterAndSort(t *testing.T) {
 	}
 }
 
+func TestListRecords_KeywordSpecialChars(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	uid := mustCreateUser(t, db, "u1")
+
+	recs := []*models.Record{
+		{Date: "2024-01-01", AmountCents: -100, Category: "餐饮", Description: "100% 满分"},
+		{Date: "2024-01-02", AmountCents: -200, Category: "交通", Description: "a_b 地铁"},
+		{Date: "2024-01-03", AmountCents: -300, Category: "购物", Description: `C:\path 购物`},
+		{Date: "2024-01-04", AmountCents: -400, Category: "餐饮", Description: "普通晚餐"},
+	}
+	for _, r := range recs {
+		if err := db.Create(ctx, r, uid); err != nil {
+			t.Fatalf("Create() = %v", err)
+		}
+	}
+
+	params := &models.QueryParams{Page: 1, PageSize: 10, SortField: "date", SortDir: "desc"}
+
+	// % 不作为通配符，仅匹配字面 "100%"
+	params.Keyword = "100%"
+	_, total, err := db.List(ctx, params, uid)
+	if err != nil {
+		t.Fatalf("keyword '100%%' List() = %v", err)
+	}
+	if total != 1 {
+		t.Errorf("keyword '100%%': total=%d, want 1", total)
+	}
+
+	// _ 不作为单字符通配符
+	params.Keyword = "a_b"
+	_, total, err = db.List(ctx, params, uid)
+	if err != nil {
+		t.Fatalf("keyword 'a_b' List() = %v", err)
+	}
+	if total != 1 {
+		t.Errorf("keyword 'a_b': total=%d, want 1", total)
+	}
+
+	// 反斜杠按字面匹配
+	params.Keyword = `C:\p`
+	_, total, err = db.List(ctx, params, uid)
+	if err != nil {
+		t.Fatalf(`keyword 'C:\p' List() = %v`, err)
+	}
+	if total != 1 {
+		t.Errorf(`keyword 'C:\p': total=%d, want 1`, total)
+	}
+}
+
 func TestUpdateDeleteRecord(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
