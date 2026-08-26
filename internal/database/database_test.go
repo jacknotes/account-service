@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"account-service/internal/models"
+	"account-service/internal/service"
 )
 
 func mustTime(year int) time.Time {
@@ -456,5 +457,122 @@ func TestBlacklistLifecycle(t *testing.T) {
 	ok, err = db.IsTokenBlacklisted(ctx, "expired")
 	if err != nil || ok {
 		t.Fatalf("IsTokenBlacklisted(expired) = %v, %v, want false/nil", ok, err)
+	}
+}
+
+func TestCreateUser_InsertsDefaultCategories(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	uid := mustCreateUser(t, db, "u1")
+
+	cats, err := db.ListCategories(ctx, uid)
+	if err != nil {
+		t.Fatalf("ListCategories() = %v", err)
+	}
+	if len(cats) != 9 {
+		t.Fatalf("default categories = %d, want 9", len(cats))
+	}
+}
+
+func TestListCategories_EnsuresDefaultsForLegacyUser(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	uid := mustCreateUser(t, db, "legacy")
+
+	// 模拟存量用户：清空其分类后首次拉取应补插默认集合
+	if _, err := db.conn.Exec(`DELETE FROM categories WHERE user_id = ?`, uid); err != nil {
+		t.Fatalf("clean categories: %v", err)
+	}
+	cats, err := db.ListCategories(ctx, uid)
+	if err != nil {
+		t.Fatalf("ListCategories() = %v", err)
+	}
+	if len(cats) != 9 {
+		t.Fatalf("legacy user should get 9 default categories, got %d", len(cats))
+	}
+}
+
+func TestCategoryCRUD(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	uid := mustCreateUser(t, db, "u1")
+
+	cat := &models.Category{Name: "宠物", Type: models.CategoryExpense}
+	if err := db.CreateCategory(ctx, cat, uid); err != nil {
+		t.Fatalf("CreateCategory() = %v", err)
+	}
+	if cat.ID == 0 {
+		t.Fatal("CreateCategory() did not set ID")
+	}
+
+	// 同类型重名 → ErrDuplicateCategory
+	if err := db.CreateCategory(ctx, &models.Category{Name: "宠物", Type: models.CategoryExpense}, uid); err != service.ErrDuplicateCategory {
+		t.Errorf("duplicate = %v, want service.ErrDuplicateCategory", err)
+	}
+	// 不同类型同名 → 允许
+	if err := db.CreateCategory(ctx, &models.Category{Name: "宠物", Type: models.CategoryIncome}, uid); err != nil {
+		t.Errorf("same name different type should be allowed: %v", err)
+	}
+
+	// 删除他人分类 → sql.ErrNoRows
+	uid2 := mustCreateUser(t, db, "u2")
+	if err := db.DeleteCategory(ctx, cat.ID, uid2); err != sql.ErrNoRows {
+		t.Errorf("delete other's category = %v, want sql.ErrNoRows", err)
+	}
+	// 删除自己的
+	if err := db.DeleteCategory(ctx, cat.ID, uid); err != nil {
+		t.Fatalf("DeleteCategory() = %v", err)
+	}
+
+	// 删除一条默认分类后不复活（COUNT 守卫语义锚定）：
+	// 此时 uid 分类 = 9 默认 + 宠物(income) = 10；删除「餐饮」→ 9，且不再补插。
+	cats, err := db.ListCategories(ctx, uid)
+	if err != nil {
+		t.Fatalf("ListCategories() = %v", err)
+	}
+	if len(cats) != 10 {
+		t.Fatalf("before deleting default: categories = %d, want 10", len(cats))
+	}
+	var foodID int64
+	for _, c := range cats {
+		if c.Name == "餐饮" {
+			foodID = c.ID
+		}
+	}
+	if foodID == 0 {
+		t.Fatal("default category 餐饮 not found")
+	}
+	if err := db.DeleteCategory(ctx, foodID, uid); err != nil {
+		t.Fatalf("DeleteCategory(餐饮) = %v", err)
+	}
+	cats, err = db.ListCategories(ctx, uid)
+	if err != nil {
+		t.Fatalf("ListCategories() after delete = %v", err)
+	}
+	if len(cats) != 9 {
+		t.Fatalf("after deleting default: categories = %d, want 9 (deleted default must not revive)", len(cats))
+	}
+	hasFood, hasPetIncome := false, false
+	for _, c := range cats {
+		if c.Name == "餐饮" {
+			hasFood = true
+		}
+		if c.Name == "宠物" && c.Type == models.CategoryIncome {
+			hasPetIncome = true
+		}
+	}
+	if hasFood {
+		t.Error("deleted default category 餐饮 should not revive")
+	}
+	if !hasPetIncome {
+		t.Error("category 宠物(income) should still exist")
+	}
+	// 再次拉取仍不复活
+	cats, err = db.ListCategories(ctx, uid)
+	if err != nil {
+		t.Fatalf("ListCategories() second pass = %v", err)
+	}
+	if len(cats) != 9 {
+		t.Fatalf("second ListCategories() = %d, want 9", len(cats))
 	}
 }

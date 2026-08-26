@@ -110,6 +110,7 @@ func main() {
 
 		recordHandler := handlers.NewRecordHandler(db, db)
 		summaryHandler := handlers.NewSummaryHandler(db)
+		categoryHandler := handlers.NewCategoryHandler(db, db)
 		auth.GET("/records", recordHandler.ListRecords)
 		auth.GET("/records/:id", recordHandler.GetRecord)
 		auth.POST("/records", recordHandler.CreateRecord)
@@ -119,6 +120,9 @@ func main() {
 		auth.GET("/summary/monthly", summaryHandler.MonthlySummary)
 		auth.GET("/summary/yearly", summaryHandler.YearlySummary)
 		auth.GET("/report", summaryHandler.Report)
+		auth.GET("/categories", categoryHandler.ListCategories)
+		auth.POST("/categories", categoryHandler.CreateCategory)
+		auth.DELETE("/categories/:id", categoryHandler.DeleteCategory)
 	}
 
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
