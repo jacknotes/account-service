@@ -233,7 +233,9 @@ onBeforeUnmount(() => {
 
 async function getCanvas() {
   const html2canvas = (await import('html2canvas')).default
-  return html2canvas(reportContent.value, { backgroundColor: '#0c0c10', scale: 2, useCORS: true })
+  // 导出背景跟随当前主题（深色 #0c0c10 / 浅色 #ffffff）
+  const bg = document.body.classList.contains('theme-light') ? '#ffffff' : '#0c0c10'
+  return html2canvas(reportContent.value, { backgroundColor: bg, scale: 2, useCORS: true })
 }
 
 async function exportImage() {

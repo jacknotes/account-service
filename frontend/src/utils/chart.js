@@ -1,4 +1,4 @@
-// ECharts 公共封装：按需注册 + 金色深色主题 + 窗口 resize 自适应
+// ECharts 公共封装：按需注册 + 深浅双主题（跟随 body.theme-light）+ 窗口 resize 自适应
 import * as echarts from 'echarts/core'
 import { LineChart, PieChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
@@ -24,9 +24,32 @@ echarts.registerTheme('gold-dark', {
   },
 })
 
+// 浅色主题（与 body.theme-light 令牌一致）
+echarts.registerTheme('gold-light', {
+  backgroundColor: 'transparent',
+  textStyle: { color: '#3a3a44' },
+  color: ['#d99a17', '#1f9e63', '#d6453d', '#b57f10', '#4a7fb5', '#8a6bb8'],
+  legend: { textStyle: { color: '#6b6b78' } },
+  categoryAxis: {
+    axisLine: { lineStyle: { color: '#dcdfe6' } },
+    axisLabel: { color: '#6b6b78' },
+    splitLine: { show: false },
+  },
+  valueAxis: {
+    axisLine: { lineStyle: { color: '#dcdfe6' } },
+    axisLabel: { color: '#6b6b78' },
+    splitLine: { lineStyle: { color: '#ececef' } },
+  },
+})
+
+// 按当前页面主题返回图表主题名
+function currentTheme() {
+  return document.body.classList.contains('theme-light') ? 'gold-light' : 'gold-dark'
+}
+
 // createChart 初始化图表并监听窗口 resize；返回 { chart, destroy }
 export function createChart(el) {
-  const chart = echarts.init(el, 'gold-dark')
+  const chart = echarts.init(el, currentTheme())
   const onResize = () => chart.resize()
   window.addEventListener('resize', onResize)
   return {

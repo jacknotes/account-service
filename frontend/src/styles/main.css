@@ -16,6 +16,7 @@
   --expense: #ff7b72;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
   --radius: 12px;
+  --banner-bg: linear-gradient(135deg, #181820, #121218);
 }
 
 body.theme-light {
@@ -35,6 +36,7 @@ body.theme-light {
   --income: #1f9e63;
   --expense: #d6453d;
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  --banner-bg: linear-gradient(135deg, #fdfaf3, #f5eedd);
 }
 
 * {
@@ -83,32 +85,19 @@ body {
   padding: 4px 12px 18px;
 }
 
-.sidebar nav {
+/* 侧边栏菜单撑满剩余高度，使版本号贴底 */
+.side-menu {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.sidebar nav a {
-  display: block;
-  padding: 10px 12px;
-  border-radius: 8px;
-  color: var(--text-dim);
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.sidebar nav a.router-link-active,
-.sidebar nav a:hover {
-  background: var(--bg-input);
-  color: var(--accent);
+  border-right: none;
+  background: transparent;
+  overflow-y: auto;
 }
 
 .sidebar .side-foot {
   font-size: 12px;
   color: var(--text-dim);
   padding: 8px 12px;
+  margin-top: auto;
 }
 
 .main {
@@ -135,10 +124,10 @@ body {
   margin: 0;
 }
 
-.topbar .actions {
+.topbar-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .content {
@@ -326,7 +315,6 @@ body {
 .page-head h3 { margin: 0; font-size: 16px; }
 
 /* 侧边栏 el-menu（金色高亮） */
-.side-menu { border-right: none; background: transparent; }
 .side-menu .el-menu-item { color: var(--text-dim); border-radius: 8px; margin: 4px 8px; height: 44px; line-height: 44px; }
 .side-menu .el-menu-item:hover { background: var(--bg-input); color: var(--text); }
 .side-menu .el-menu-item.is-active { background: var(--gold-gradient); color: #14140a; font-weight: 600; }
@@ -337,8 +325,27 @@ body {
 /* 汉堡按钮（仅移动端显示） */
 .hamburger { display: none; background: none; border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 16px; width: 40px; height: 40px; cursor: pointer; }
 
-/* 抽屉内操作区 */
-.drawer-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+/* 顶栏主题切换图标按钮（深浅色通用） */
+.theme-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 16px;
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, border-color 0.2s;
+}
+.theme-toggle:hover { background: var(--bg-input); }
+
+/* 用户下拉触发器 */
+.user-trigger { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; padding: 6px 10px; border-radius: 8px; transition: background 0.2s; }
+.user-trigger:hover { background: var(--bg-input); color: var(--text); }
+.user-trigger .caret { font-size: 12px; color: var(--text-dim); }
 
 /* 图表容器 */
 .chart-box { width: 100%; height: 320px; }
@@ -349,10 +356,6 @@ body {
 
 @media (max-width: 767px) {
   .hamburger { display: inline-flex; align-items: center; justify-content: center; }
-  .desktop-actions { display: none; }
-}
-@media (min-width: 768px) {
-  .mobile-actions { display: none; }
 }
 
 /* ---------- 记账页（风格 C） ---------- */
@@ -361,7 +364,7 @@ body {
   justify-content: space-between;
   align-items: center;
   gap: 16px;
-  background: linear-gradient(135deg, #181820, #121218);
+  background: var(--banner-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 20px 24px;

@@ -14,16 +14,29 @@
           <button class="hamburger" type="button" aria-label="菜单" @click="drawerOpen = true">☰</button>
           <h1>{{ currentTitle }}</h1>
         </div>
-        <div class="actions desktop-actions">
-          <el-button size="small" @click="toggleTheme">{{ isLight ? '☀️ 浅色' : '🌙 深色' }}</el-button>
-          <el-button size="small" @click="openPassword">修改密码</el-button>
-          <el-button size="small" @click="openTOTP">TOTP</el-button>
-          <span class="user-chip">{{ user?.username }} · {{ user?.role === 'admin' ? '管理员' : '用户' }}</span>
-          <el-button size="small" type="danger" plain @click="doLogout">退出</el-button>
-        </div>
-        <div class="actions mobile-actions">
-          <span class="user-chip">{{ user?.username }}</span>
-          <el-button size="small" type="danger" plain @click="doLogout">退出</el-button>
+        <div class="topbar-actions">
+          <button
+            class="theme-toggle"
+            type="button"
+            :aria-label="isLight ? '切换到深色模式' : '切换到浅色模式'"
+            :title="isLight ? '切换到深色模式' : '切换到浅色模式'"
+            @click="toggleTheme"
+          >
+            {{ isLight ? '☀️' : '🌙' }}
+          </button>
+          <el-dropdown trigger="click" @command="onUserCommand">
+            <span class="user-chip user-trigger">
+              {{ user?.username }} · {{ user?.role === 'admin' ? '管理员' : '用户' }}
+              <span class="caret">▾</span>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="password">修改密码</el-dropdown-item>
+                <el-dropdown-item command="totp">TOTP 设置</el-dropdown-item>
+                <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </header>
 
@@ -32,16 +45,11 @@
       </main>
     </div>
 
-    <!-- 移动端抽屉导航 -->
+    <!-- 移动端抽屉导航（顶栏下拉已覆盖账户操作，抽屉仅保留导航） -->
     <el-drawer v-model="drawerOpen" direction="ltr" size="72%" title="💰 记账本">
       <el-menu :default-active="route.path" router class="side-menu" @select="drawerOpen = false">
         <el-menu-item v-for="n in navRoutes" :key="n.path" :index="n.path">{{ n.title }}</el-menu-item>
       </el-menu>
-      <div class="drawer-actions">
-        <el-button @click="toggleTheme">{{ isLight ? '☀️ 浅色' : '🌙 深色' }}</el-button>
-        <el-button @click="openPassword">修改密码</el-button>
-        <el-button @click="openTOTP">TOTP</el-button>
-      </div>
     </el-drawer>
 
     <!-- 修改密码 -->
@@ -147,6 +155,13 @@ async function refreshUser() {
   }
 }
 onMounted(refreshUser)
+
+// 顶栏用户下拉指令分发
+function onUserCommand(cmd) {
+  if (cmd === 'password') openPassword()
+  else if (cmd === 'totp') openTOTP()
+  else if (cmd === 'logout') doLogout()
+}
 
 // 退出登录
 async function doLogout() {
