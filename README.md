@@ -37,7 +37,34 @@ open http://localhost:8081/app/
 
 首次访问会跳转登录页；**无用户时可「注册」，首个用户自动成为管理员**，之后注册关闭。
 
-### 方式二：本地开发
+### 方式二：拉取现成镜像运行（无需构建，适合部署）
+
+镜像已发布到 Docker Hub：`jacknotes/account-service`（多阶段构建，含前后端，约 31MB）。
+
+```bash
+# 1. 拉取镜像（大陆网络可用加速器，见下方说明）
+docker pull jacknotes/account-service:v2
+docker pull mysql:5.7
+
+# 2. 准备 compose 与环境变量（无需项目源码，仅需 docker-compose.yml、scripts/init-mysql.sql、.env）
+#    .env 至少包含：JWT_SECRET、MYSQL_ROOT_PASSWORD、MYSQL_USER、MYSQL_PASSWORD
+
+# 3. 启动（镜像已存在时 compose 不会触发构建）
+docker compose up -d
+
+# 4. 访问（端口以 compose 中 ports 映射为准，如 15002:8081）
+open http://localhost:15002/app/
+```
+
+> - 若 compose 保留了 `build: .`，本地无源码时执行 `docker compose up -d --no-build`，或直接删掉 `build:` 行。
+> - **大陆拉取加速**：个人镜像 `hub.rat.dev` 前缀实测可用，官方镜像 `docker.m.daocloud.io` 可用：
+>   ```bash
+>   docker pull hub.rat.dev/jacknotes/account-service:v2 && docker tag hub.rat.dev/jacknotes/account-service:v2 jacknotes/account-service:v2
+>   docker pull docker.m.daocloud.io/library/mysql:5.7 && docker tag docker.m.daocloud.io/library/mysql:5.7 mysql:5.7
+>   ```
+>   公益加速器可用性会波动；离线机器可直接 `docker save jacknotes/account-service:v2 mysql:5.7 | gzip > images.tar.gz`，目标机 `docker load` 导入。
+
+### 方式三：本地开发
 
 ```bash
 # 1. 启动基础依赖（仅开发用；若本机 3306 被占用（如 VMware NAT），叠加 override 映射到 3307）
