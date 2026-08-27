@@ -36,7 +36,7 @@
         </div>
       </div>
 
-      <template v-if="report.daily.length">
+      <template v-if="report.daily?.length">
         <h4>收支趋势（按日）</h4>
         <div ref="dailyChartEl" class="chart-box"></div>
       </template>
@@ -66,7 +66,7 @@
         class="pager"
         background
         layout="total, prev, pager, next"
-        :total="report.daily.length"
+        :total="report.daily?.length || 0"
         :page-size="20"
         :current-page="dailyPageNo"
         @current-change="dailyPageNo = $event"
@@ -109,7 +109,7 @@
         class="pager"
         background
         layout="total, prev, pager, next"
-        :total="report.by_category.length"
+        :total="report.by_category?.length || 0"
         :page-size="20"
         :current-page="catPageNo"
         @current-change="catPageNo = $event"
@@ -165,6 +165,9 @@ async function load() {
     catPageNo.value = 1
     await nextTick()
     renderCharts()
+    if (!report.value.count) {
+      ElMessage.info('所选日期范围内暂无数据')
+    }
   } catch (e) {
     error.value = e.message
   }

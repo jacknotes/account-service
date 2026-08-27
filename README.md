@@ -259,6 +259,47 @@ docker exec -i account-mysql mysql -uaccount -p'密码' account_service < backup
 
 > dump 包含 `schema_migrations` 版本记录，导入后应用启动不会重复建表；用户密码哈希一并迁移，用原账号密码登录。
 
+### 管理员密码重置（忘记密码时）
+
+密码为 bcrypt 单向哈希存储，**无法找回，只能重置**。系统未提供自助重置通道（管理员改密接口需先登录），需直接改数据库：
+
+```bash
+# 1. 生成新密码的 bcrypt 哈希（密码须满足强度规则：≥8 位 + 大小写 + 数字 + 特殊字符）
+python3 -c "import bcrypt; print(bcrypt.hashpw(b'NewP@ssw0rd', bcrypt.gensalt(10)).decode())"
+#    或：htpasswd -bnBC 10 "" 'NewP@ssw0rd' | tr -d ':\n'   （需 apache2-utils）
+
+# 2. 更新数据库中的哈希
+docker exec account-mysql mysql -uaccount -p'数据库密码' account_service -e \
+  "UPDATE users SET password_hash='<第1步生成的哈希>' WHERE username='admin';"
+
+# 3.（建议）清除该用户全部 refresh token，强制旧会话下线
+docker exec account-mysql mysql -uaccount -p'数据库密码' account_service -e \
+  "DELETE FROM refresh_tokens WHERE user_id=(SELECT id FROM users WHERE username='admin');"
+```
+
+> 直接改库不会走应用的改密流程，已签发的 15 分钟内 access token 无法批量拉黑（会自然过期）；
+> 若登录时提示"过于频繁"，是连续失败触发的账号锁定（5 次锁 5 分钟，存应用内存），等待或重启应用容器即可。
+
+### 反向代理与真实 IP（TRUSTED_PROXIES）
+
+应用部署在 Nginx 后时，`TRUSTED_PROXIES` 决定 `c.ClientIP()` 是否采信 `X-Forwarded-For` 头。**常见坑**：
+
+- Nginx 部署在宿主机、应用在容器里时，应用看到的直连来源是 **Docker 网桥网关 IP**（如 `172.20.0.1`），不是 `127.0.0.1`。
+  配置 `TRUSTED_PROXIES=127.0.0.1` 无效，应填网关 IP。
+- 网段由 Docker 动态分配，`compose down` 重建网络后可能变化导致配置失效。建议固定网段：
+  ```yaml
+  networks:
+    account-net:
+      driver: bridge
+      ipam:
+        config:
+          - subnet: 172.28.0.0/24
+            gateway: 172.28.0.1
+  ```
+  然后 `TRUSTED_PROXIES=172.28.0.1`。
+- Nginx 需传递真实 IP 头：`proxy_set_header X-Real-IP $remote_addr; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`
+- 配错时的症状：登录/操作日志全部记录同一内网 IP、不同用户共享限流配额易触发 429。
+
 ### 自动启动（Windows + WSL2 环境）
 
 本机以 WSL2（Ubuntu 24.04）运行 Docker。**WSL 未启用 systemd**（PID 1 为 init），Docker daemon 与应用栈需手动拉起：

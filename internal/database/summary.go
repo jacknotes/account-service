@@ -158,7 +158,7 @@ func (db *DB) Report(ctx context.Context, startDate, endDate string, userID int6
 	if err := requireUserID(userID); err != nil {
 		return nil, err
 	}
-	r := &models.Report{StartDate: startDate, EndDate: endDate}
+	r := &models.Report{StartDate: startDate, EndDate: endDate, Daily: []*models.BreakdownItem{}, Monthly: []*models.BreakdownItem{}, ByCategory: []*models.CategoryItem{}}
 
 	income, expense, cnt, err := db.summaryAggRow(ctx, "date >= ? AND date <= ? AND user_id = ?", []interface{}{startDate, endDate, userID})
 	if err != nil {
