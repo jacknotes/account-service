@@ -12,6 +12,7 @@
 
 - ✅ **用户认证**：用户名密码登录、TOTP 双因素、refresh token 轮换/服务端撤销、登出
 - ✅ 记账记录增删改查、日期范围/关键字查询、服务端排序与分页
+- ✅ **分类管理**：自定义收支分类（注册时自动初始化默认分类），记录按分类归集与筛选
 - ✅ **每日/每月/每年汇总** 与 **自定义区间报表**（按日/按月/按分类）
 - ✅ 报表导出为 PDF / 图片
 - ✅ 多用户 + 管理员：用户管理、操作日志、登录日志（审计）
@@ -39,14 +40,14 @@ open http://localhost:8081/app/
 ### 方式二：本地开发
 
 ```bash
-# 1. 启动基础依赖（仅开发用，暴露 3306 到本机）
-docker compose -f docker-compose.infra.yml up -d
+# 1. 启动基础依赖（仅开发用；若本机 3306 被占用（如 VMware NAT），叠加 override 映射到 3307）
+docker compose -f docker-compose.infra.yml -f docker-compose.infra.override.yml up -d
 
 # 2. 构建前端
 cd frontend && npm install && npm run build && cd ..
 
-# 3. 配置并启动后端
-export MYSQL_DSN='account:account123456@tcp(127.0.0.1:3306)/account_service?parseTime=true&charset=utf8mb4&loc=Local'
+# 3. 配置并启动后端（端口按上一步实际映射调整：3306 或 3307）
+export MYSQL_DSN='account:account123456@tcp(127.0.0.1:3307)/account_service?parseTime=true&charset=utf8mb4&loc=Local'
 export JWT_SECRET='your-random-secret-at-least-32-chars'
 go run main.go
 ```
@@ -130,6 +131,13 @@ server {
 | PUT | /api/records/:id | 更新记录（部分更新） |
 | DELETE | /api/records/:id | 删除记录 |
 
+**分类（均需认证，数据按用户隔离）**
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | /api/categories | 分类列表（按 type 筛选：income/expense） |
+| POST | /api/categories | 创建分类（name + type，同用户同名同类型唯一） |
+| DELETE | /api/categories/:id | 删除分类（不影响已有记录的分类文本） |
+
 **汇总与报表（均需认证）**
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -211,27 +219,38 @@ docker compose down               # 停止（数据保留在卷中）
 - 数据持久化于命名卷 `mysql_data`，`docker compose down` 不会丢数据
 - 健康检查：`GET /healthz`（存活）、`GET /readyz`（MySQL 就绪）
 
+### 数据迁移（导入 dump 到新环境）
+
+```bash
+# 1. 备份（在源机器执行，--single-transaction 保证一致性快照）
+docker exec account-mysql mysqldump -uaccount -p'密码' --default-character-set=utf8mb4 \
+  --single-transaction --skip-lock-tables account_service > backups/account_service_$(date +%Y%m%d).sql
+
+# 2. 导入（在目标机器执行，需 MySQL 已 healthy 且库为空——dump 含建表语句与全部数据）
+docker exec -i account-mysql mysql -uaccount -p'密码' account_service < backups/account_service_YYYYMMDD.sql
+```
+
+> dump 包含 `schema_migrations` 版本记录，导入后应用启动不会重复建表；用户密码哈希一并迁移，用原账号密码登录。
+
 ### 自动启动（Windows + WSL2 环境）
 
-本机以 WSL2（Ubuntu 24.04）运行 Docker，配置了两层自启：
+本机以 WSL2（Ubuntu 24.04）运行 Docker。**WSL 未启用 systemd**（PID 1 为 init），Docker daemon 与应用栈需手动拉起：
 
-1. **WSL 内 systemd 服务** `account-service.service`（已 `enable`）：WSL 启动时自动拉起 `docker compose up -d`。
-   单元文件 `/etc/systemd/system/account-service.service`，管理命令：
+```bash
+# WSL 重启后 Docker daemon 不会自启，先启动 daemon
+sudo service docker start
 
-   ```bash
-   systemctl status account-service       # 状态
-   journalctl -u account-service          # 自启日志
-   systemctl start|stop account-service   # 手动启停（stop 会执行 compose down）
-   ```
+# 再拉起应用栈
+cd /mnt/f/project/account-service && docker compose up -d
+```
 
-2. **Windows 登录触发器**：启动目录 `...\Startup\account-service-start.cmd`，登录时执行
-   `wsl -d Ubuntu-24.04 -u root -e systemctl start account-service`，从而触发 WSL 与整栈启动。
-
-**启动链路**：Windows 登录 → Startup 的 .cmd → WSL 启动 → systemd 启动 docker → 启动 account-service → 容器就绪 → 访问 `http://localhost:8081/app/`。
+如需开机自启，可选方案：
+- 在 `/etc/wsl.conf` 的 `[boot]` 段设置 `systemd=true` 后启用 systemd 服务
+- 或在 Windows 启动目录放一个 `.cmd` 脚本执行
+  `wsl -d Ubuntu-24.04 -u root -e sh -c "service docker start && cd /mnt/f/project/account-service && docker compose up -d"`
 
 > 提示：
-> - 登录时会短暂闪现 cmd 窗口（Startup 的 .cmd 属正常现象）；如需无感可改用隐藏窗口的 VBS 或计划任务。
-> - 若项目目录发生变更，需同步修改 systemd 单元的 `WorkingDirectory` 与 `account-service-start.cmd`。
+> - WSL 重启后 IP 可能变化，若后端直连 WSL 内 MySQL（不走容器网络），需同步更新 `MYSQL_DSN`。
 > - Docker 镜像加速：本机 `/etc/docker/daemon.json` 配置了可用镜像源（`docker.1panel.live`、`docker.m.daocloud.io`）。
 
 ## 变更日志
@@ -248,8 +267,10 @@ docker compose down               # 停止（数据保留在卷中）
   - 新增 `POST /api/auth/logout`；登出/改密后 access token 进黑名单
   - 新增 `TRUSTED_PROXIES` 支持反代；输入校验（日期/长度/密码 8~72 字节含复杂度）
 - **可观测性**：request-id 贯穿 + 结构化访问日志
+- **分类管理**：新增 `categories` 表与 API（列表/创建/删除），注册时自动初始化默认分类；前端新增分类管理页面
+- **数据迁移**：旧版 SQLite（`accounting.db`）数据已迁入 MySQL（金额元→分、归属 admin、分类按收支方向推导入库）
 - **前端**：整体重构为 Vue 3 + Vite（移除 CDN 依赖，排序/分页服务端化，401 自动续期）
-- **部署**：Dockerfile 升级 Go 1.24 + 前端构建阶段；compose 升级 mysql:5.7、去除默认弱口令、收敛端口
+- **部署**：Dockerfile 升级 Go 1.24 + 前端构建阶段；compose 升级 mysql:5.7、去除默认弱口令、收敛端口；应用容器增加 `TZ=Asia/Shanghai`；`.dockerignore` 排除备份/文档等本地目录，`backups/`（mysqldump 产物）加入 `.gitignore`
 - **测试**：handler 测试改为内存 fakes（无需数据库）；MySQL 集成测试以 `MYSQL_TEST_DSN` 门控；新增配置/黑名单/refresh 轮换测试
 
 ### 历史

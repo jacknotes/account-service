@@ -2,6 +2,9 @@
 data/
 *.db
 
+# 数据备份（mysqldump 产物，含用户数据，勿提交）
+backups/
+
 # 可执行文件
 *.exe
 *.TTF
@@ -39,3 +42,6 @@ frontend/components.d.ts
 
 # 头脑风暴视觉伴侣会话文件
 .superpowers/
+
+# OMO 会话续跑文件（本地运行产物）
+.omo/

@@ -37,6 +37,7 @@ services:
     environment:
       - PORT=8081
       - GIN_MODE=release
+      - TZ=Asia/Shanghai
       - MYSQL_DSN=${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(mysql:3306)/${MYSQL_DATABASE:-account_service}?parseTime=true&charset=utf8mb4&loc=Local
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET 必须设置，至少 32 位随机字符串}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
