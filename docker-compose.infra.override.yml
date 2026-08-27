@@ -1,0 +1,9 @@
+# 本地开发端口映射覆盖：
+# Windows 宿主机 3306 已被 VMware NAT (vmnat) 端口转发占用，
+# 故将 MySQL 映射到宿主机 3307；应用 DSN 使用 127.0.0.1:3307。
+# 使用方式：
+#   docker compose -f docker-compose.infra.yml -f docker-compose.infra.override.yml up -d
+services:
+  mysql:
+    ports:
+      - "3307:3306"
