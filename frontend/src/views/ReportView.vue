@@ -179,7 +179,8 @@ function renderCharts() {
     dailyChart = createChart(dailyChartEl.value)
     dailyChart.chart.setOption({
       tooltip: { trigger: 'axis', valueFormatter: (v) => formatCents(v) },
-      legend: { data: ['收入', '支出'] },
+      // ECharts 6 默认 legend 位于底部，会与日期轴标签重叠，显式置顶
+      legend: { top: 4, left: 'center', data: ['收入', '支出'] },
       grid: { left: 80, right: 20, top: 40, bottom: 30 },
       xAxis: { type: 'category', data: report.value.daily.map((d) => d.period) },
       yAxis: { type: 'value', axisLabel: { formatter: (v) => (v / 100).toFixed(0) } },

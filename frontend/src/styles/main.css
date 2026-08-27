@@ -212,7 +212,11 @@ body {
   align-items: center;
   justify-content: center;
   background: var(--bg);
+  position: relative;
 }
+
+/* 登录页右上角主题切换按钮 */
+.auth-theme-toggle { position: absolute; top: 16px; right: 16px; }
 
 .auth-card {
   width: 100%;

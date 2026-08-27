@@ -1,5 +1,14 @@
 <template>
   <div class="auth-page">
+    <button
+      class="theme-toggle auth-theme-toggle"
+      type="button"
+      :aria-label="isLight ? '切换到深色模式' : '切换到浅色模式'"
+      :title="isLight ? '切换到深色模式' : '切换到浅色模式'"
+      @click="toggleTheme"
+    >
+      {{ isLight ? '☀️' : '🌙' }}
+    </button>
     <el-card class="auth-card" shadow="always">
       <h2 class="gold-text" style="margin: 0 0 20px; text-align: center">💰 记账本</h2>
 
@@ -47,6 +56,20 @@ import { api } from '../api/http'
 import { setTokens, setUser } from '../api/auth'
 
 const router = useRouter()
+
+// 主题切换（与 AppLayout 逻辑一致：html.dark + body.theme-light）
+const isLight = ref(localStorage.getItem('theme') === 'light')
+function applyTheme() {
+  document.documentElement.classList.toggle('dark', !isLight.value)
+  document.body.classList.toggle('theme-light', isLight.value)
+}
+function toggleTheme() {
+  isLight.value = !isLight.value
+  localStorage.setItem('theme', isLight.value ? 'light' : 'dark')
+  applyTheme()
+}
+onMounted(applyTheme)
+
 const showRegister = ref(false)
 const allowRegister = ref(false)
 const loading = ref(false)
