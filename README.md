@@ -211,8 +211,21 @@ GET /api/records?start_date=2024-01-01&end_date=2024-12-31&keyword=餐饮&sort_f
 ├── frontend/                  # Vue 3 + Vite 前端（构建产物 dist/）
 ├── scripts/init-mysql.sql     # 数据库初始化（仅建库）
 ├── Dockerfile / docker-compose*.yml
-└── docs/middleware.md         # 中间件选型建议
+├── docs/middleware.md         # 中间件选型建议
+└── .trae/skills/              # 可复用脚手架 SKILL（搭建同类项目）
 ```
+
+## 复用本工程脚手架（搭建同类项目）
+
+本仓库沉淀了一套 **Go + Gin + MySQL + Vue3 + Element Plus** 全栈 CRUD 项目的可运行骨架与踩坑要点，封装为 SKILL：
+
+```
+.trae/skills/go-vue-crud-scaffold/
+```
+
+它覆盖目录分层、多阶段 Dockerfile、docker-compose 部署约定（固定网段/TZ/端口收敛/镜像 tag）、认证安全（bcrypt/JWT 轮换/金额用分）、反代真实 IP（TRUSTED_PROXIES）等最佳实践。
+
+**用法**：对 AI 说「按 go-vue-crud-scaffold 搭一个 XX 应用骨架」，或「像这个项目搭一个类似的」，即可据此生成同类项目基础结构。详情见 `docs/middleware.md` 与各文件内注释。
 
 ## 测试
 

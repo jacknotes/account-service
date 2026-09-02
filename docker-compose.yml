@@ -31,7 +31,8 @@ services:
   # 应用服务
   account-service:
     build: .
-    image: jacknotes/account-service:latest
+    # 使用已发布到 Docker Hub 的镜像；本地构建产物也会打上同名 tag
+    image: jacknotes/account-service:v2
     ports:
       - "8081:8081"
     environment:
