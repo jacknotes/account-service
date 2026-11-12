@@ -3,6 +3,10 @@ package handlers
 import (
 	"testing"
 	"time"
+
+	"account-service/internal/middleware"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func TestTOTPRateLimiter_Allow_NewUser(t *testing.T) {
@@ -109,4 +113,45 @@ func TestTOTPRateLimiter_ZeroAttempts(t *testing.T) {
 		t.Error("Allow(1) should return true for user with zero attempts")
 	}
 	rl.Reset(1) // Reset on user with no attempts should not panic
+}
+
+// TestIssueToken_UniquePerCall 回归：每次签发的 access token 必须唯一。
+// 历史缺陷：JWT 的 iat/exp 只有秒级精度且无 jti，同一秒内两次登录会生成完全相同的
+// token 字符串；配合黑名单，会出现「登出后立刻重新登录，新 token 恰是刚被拉黑的那一个」
+// 从而被误判为 401。
+func TestIssueToken_UniquePerCall(t *testing.T) {
+	_, _, h, _ := newTestHandler()
+	seen := make(map[string]struct{}, 100)
+	for i := 0; i < 100; i++ {
+		tok, err := h.issueToken(1, "u", "user")
+		if err != nil {
+			t.Fatalf("issueToken() = %v", err)
+		}
+		if _, dup := seen[tok]; dup {
+			t.Fatalf("第 %d 次签发的 token 与之前重复（缺少唯一 jti）", i)
+		}
+		seen[tok] = struct{}{}
+	}
+}
+
+// TestIssueToken_HasJTI 确认 jti 已写入。
+func TestIssueToken_HasJTI(t *testing.T) {
+	_, _, h, _ := newTestHandler()
+	tok, err := h.issueToken(7, "u", "admin")
+	if err != nil {
+		t.Fatalf("issueToken() = %v", err)
+	}
+	claims := &middleware.Claims{}
+	parsed, err := jwt.ParseWithClaims(tok, claims, func(*jwt.Token) (interface{}, error) {
+		return []byte("test-secret-key-for-testing-123456789"), nil
+	})
+	if err != nil || !parsed.Valid {
+		t.Fatalf("解析 token 失败: %v", err)
+	}
+	if claims.ID == "" {
+		t.Error("claims.ID (jti) 不应为空")
+	}
+	if claims.UserID != 7 || claims.Role != "admin" {
+		t.Errorf("claims = %+v", claims)
+	}
 }

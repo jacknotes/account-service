@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -110,6 +112,66 @@ func TestAuth_ExpiredToken(t *testing.T) {
 	Auth(secret, nil)(c)
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", w.Code)
+	}
+}
+
+// fakeBlacklister 可控返回值的黑名单实现。
+type fakeBlacklister struct {
+	listed bool
+	err    error
+}
+
+func (f *fakeBlacklister) IsTokenBlacklisted(_ context.Context, _ string) (bool, error) {
+	return f.listed, f.err
+}
+
+func validTestToken(t *testing.T, secret string) string {
+	t.Helper()
+	return testToken(t, secret, &Claims{
+		UserID:   1,
+		Username: "test",
+		Role:     "user",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	})
+}
+
+func doAuth(secret, token string, bl TokenBlacklister) *httptest.ResponseRecorder {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/", nil)
+	c.Request.Header.Set("Authorization", "Bearer "+token)
+	Auth(secret, bl)(c)
+	return w
+}
+
+// 已拉黑的 token 必须被拒绝（登出/改密后不可继续使用）。
+func TestAuth_BlacklistedTokenRejected(t *testing.T) {
+	const secret = "test-secret-key-for-testing-12345678"
+	w := doAuth(secret, validTestToken(t, secret), &fakeBlacklister{listed: true})
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+}
+
+// 未拉黑的 token 正常放行。
+func TestAuth_NotBlacklistedAllowed(t *testing.T) {
+	const secret = "test-secret-key-for-testing-12345678"
+	w := doAuth(secret, validTestToken(t, secret), &fakeBlacklister{listed: false})
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+}
+
+// fail-closed 回归：黑名单查询出错时必须拒绝，而不是放行。
+// 历史缺陷正是「查询恒不命中/出错即放行」，使登出后的 token 仍可用。
+func TestAuth_BlacklistErrorFailClosed(t *testing.T) {
+	const secret = "test-secret-key-for-testing-12345678"
+	w := doAuth(secret, validTestToken(t, secret), &fakeBlacklister{err: errors.New("db down")})
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 (fail-closed)", w.Code)
 	}
 }
 

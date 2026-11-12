@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -153,6 +154,12 @@ func main() {
 			c.String(http.StatusOK, "前端尚未构建，请先执行: cd frontend && npm install && npm run build")
 		})
 	}
+
+	// 站点图标：index.html 已声明 /app/favicon.svg，但浏览器仍会默认请求根路径
+	// /favicon.ico，若不做兜底会在控制台留下 404 报错噪音。
+	r.GET("/favicon.ico", serveFavicon(cfg.Frontend))
+	r.GET("/favicon.svg", serveFavicon(cfg.Frontend))
+
 	r.GET("/", func(c *gin.Context) { c.Redirect(302, "/app/") })
 
 	srv := &http.Server{
@@ -184,4 +191,24 @@ func main() {
 	}
 
 	slog.Info("服务已安全关闭")
+}
+
+// serveFavicon 返回站点图标处理器。
+// 优先返回前端构建产物中的 favicon（dist/favicon.svg 或 .ico）；
+// 若构建产物缺失，则回退到内置的 SVG，保证 /favicon.ico 永不 404。
+func serveFavicon(frontendDir string) gin.HandlerFunc {
+	const fallback = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">` +
+		`<rect width="64" height="64" rx="14" fill="#f5c451"/>` +
+		`<text x="32" y="45" font-size="38" text-anchor="middle">💰</text></svg>`
+	return func(c *gin.Context) {
+		for _, name := range []string{"favicon.ico", "favicon.svg"} {
+			p := filepath.Join(frontendDir, name)
+			if _, err := os.Stat(p); err == nil {
+				c.File(p)
+				return
+			}
+		}
+		c.Header("Cache-Control", "public, max-age=86400")
+		c.Data(http.StatusOK, "image/svg+xml", []byte(fallback))
+	}
 }

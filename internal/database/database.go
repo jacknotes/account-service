@@ -278,6 +278,14 @@ func (db *DB) Create(ctx context.Context, r *models.Record, userID int64) error 
 		return fmt.Errorf("failed to get last insert id: %w", err)
 	}
 	r.ID = id
+	// 回填 created_at/updated_at：这两列由 MySQL 默认值（CURRENT_TIMESTAMP）生成，
+	// 若不回查则结构体里是 Go 零值时间（0001-01-01T00:00:00Z），接口会回显错误时间。
+	if err := db.conn.QueryRowContext(ctx,
+		`SELECT created_at, updated_at FROM records WHERE id = ? AND user_id = ?`,
+		id, userID,
+	).Scan(&r.CreatedAt, &r.UpdatedAt); err != nil {
+		return fmt.Errorf("回填记录时间戳失败: %w", err)
+	}
 	return nil
 }
 

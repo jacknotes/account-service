@@ -460,6 +460,50 @@ func TestBlacklistLifecycle(t *testing.T) {
 	}
 }
 
+// TestBlacklistTimezoneIndependent 回归：黑名单的过期判断必须与容器/数据库时区无关。
+// 历史缺陷：用 SQL 的 NOW() 与 Go 写入的时间比较，当应用容器为 UTC、MySQL 为 +08:00
+// 时，刚写入的记录会被立即判为过期并删除，导致登出后 token 依然可用。
+func TestBlacklistTimezoneIndependent(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	// 模拟真实的登出场景：expiresAt = 现在 + 15 分钟。
+	hash := "tz-regression-hash"
+	if err := db.BlacklistToken(ctx, hash, time.Now().Add(15*time.Minute)); err != nil {
+		t.Fatalf("BlacklistToken() = %v", err)
+	}
+
+	// 关键断言：刚拉黑的 token 必须仍然在黑名单中（不能因时区差被当场清理）。
+	ok, err := db.IsTokenBlacklisted(ctx, hash)
+	if err != nil {
+		t.Fatalf("IsTokenBlacklisted() = %v", err)
+	}
+	if !ok {
+		t.Fatal("刚拉黑的 token 应仍在黑名单中；若为 false 说明过期判断受时区影响（缺陷复发）")
+	}
+
+	// 记录确实存在于表中（未被清理语句误删）。
+	var n int
+	if err := db.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM token_blacklist WHERE token_hash = ?`, hash).Scan(&n); err != nil {
+		t.Fatalf("查询黑名单失败: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("token_blacklist 中应有 1 条记录，实际 %d 条（清理逻辑误删）", n)
+	}
+
+	// 稍早已过期的 token 不应被判为有效。
+	if err := db.BlacklistToken(ctx, "tz-expired", time.Now().Add(-time.Minute)); err != nil {
+		t.Fatalf("BlacklistToken(expired) = %v", err)
+	}
+	ok, err = db.IsTokenBlacklisted(ctx, "tz-expired")
+	if err != nil {
+		t.Fatalf("IsTokenBlacklisted(expired) = %v", err)
+	}
+	if ok {
+		t.Fatal("已过期的 token 不应被判为在黑名单中")
+	}
+}
+
 func TestCreateUser_InsertsDefaultCategories(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()

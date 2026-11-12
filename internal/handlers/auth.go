@@ -622,18 +622,35 @@ func (h *AuthHandler) issueToken(userID int64, username, role string) (string, e
 	if role == "" {
 		role = models.RoleUser
 	}
+	// jti 必须唯一：JWT 的 iat/exp 只有秒级精度，若不含唯一标识，同一用户在同一秒内
+	// 两次登录会生成完全相同的 token 字符串。配合 access token 黑名单，就会出现
+	// 「登出后立刻重新登录，拿到的新 token 恰好是刚被拉黑的那一个」而被判 401。
+	jti, err := randomHex(16)
+	if err != nil {
+		return "", fmt.Errorf("generate jti: %w", err)
+	}
 	claims := &middleware.Claims{
 		UserID:   userID,
 		Username: username,
 		Role:     role,
 		Type:     "access",
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        jti,
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(accessTokenTTL)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(h.jwtSecret))
+}
+
+// randomHex 生成 n 字节的随机十六进制字符串。
+func randomHex(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // issueRefreshToken 生成不透明 refresh token，仅存 SHA-256 哈希到数据库，

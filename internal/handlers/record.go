@@ -105,21 +105,24 @@ func (h *RecordHandler) UpdateRecord(c *gin.Context) {
 		respondBadRequest(c, "请求参数错误")
 		return
 	}
-	if req.Date != nil || req.Category != nil || req.Description != nil {
-		date := ""
-		if req.Date != nil {
-			date = *req.Date
+	// 仅校验请求中实际提供的字段，未提供的字段沿用库中原值。
+	// 之前把所有字段拼成完整入参交给 validateRecord，导致只改 description 时
+	// date 为空串而被判「日期格式必须为 YYYY-MM-DD」（部分更新契约缺陷）。
+	if req.Date != nil {
+		if !isValidDate(*req.Date) {
+			respondBadRequest(c, "日期格式必须为 YYYY-MM-DD")
+			return
 		}
-		category := ""
-		if req.Category != nil {
-			category = *req.Category
+	}
+	if req.Category != nil {
+		if len([]rune(*req.Category)) > maxCategoryLen {
+			respondBadRequest(c, "分类长度不能超过 64 个字符")
+			return
 		}
-		description := ""
-		if req.Description != nil {
-			description = *req.Description
-		}
-		if msg := validateRecord(date, category, description); msg != "" {
-			respondBadRequest(c, msg)
+	}
+	if req.Description != nil {
+		if len([]rune(*req.Description)) > maxDescriptionLen {
+			respondBadRequest(c, "描述长度不能超过 255 个字符")
 			return
 		}
 	}

@@ -66,12 +66,19 @@ func Auth(jwtSecret string, blacklister TokenBlacklister) gin.HandlerFunc {
 		if blacklister != nil {
 			hash := sha256Hex(parts[1])
 			exists, err := blacklister.IsTokenBlacklisted(c.Request.Context(), hash)
-			if err == nil && exists {
+			if err != nil {
+				// fail-closed：无法确认 token 是否已被撤销时拒绝访问。
+				// 若在此放行，黑名单一旦异常（如历史上 MySQL 时区不一致导致查询
+				// 恒不命中）就会静默失效，登出/改密后的 token 仍可继续使用。
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "登录状态校验失败，请重新登录"})
+				c.Abort()
+				return
+			}
+			if exists {
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "登录已过期，请重新登录"})
 				c.Abort()
 				return
 			}
-			// 查询失败时不拦截（黑名单查询不可用不影响正常登录态）
 		}
 		c.Set("user_id", claims.UserID)
 		c.Set("username", claims.Username)

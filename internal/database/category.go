@@ -111,6 +111,13 @@ func (db *DB) CreateCategory(ctx context.Context, cat *models.Category, userID i
 	}
 	cat.ID = id
 	cat.UserID = userID
+	// 回填 created_at：该列由 MySQL 默认值生成，不回查会回显 Go 零值时间。
+	if err := db.conn.QueryRowContext(ctx,
+		`SELECT created_at FROM categories WHERE id = ?`,
+		id,
+	).Scan(&cat.CreatedAt); err != nil {
+		return fmt.Errorf("回填分类创建时间失败: %w", err)
+	}
 	return nil
 }
 

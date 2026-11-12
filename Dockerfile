@@ -33,7 +33,11 @@ COPY --from=builder /build/account-service .
 COPY --from=frontend /fe/dist ./frontend/dist
 
 # 创建用户并降权
-RUN adduser -D -u 1001 appuser && \
+# tzdata 必须安装：docker-compose 设置了 TZ=Asia/Shanghai，但 alpine 基础镜像
+# 不含时区数据库。缺失时 Go 无法解析 TZ 会静默回退到 UTC，导致 MySQL 按 +08:00
+# 写入的 CURRENT_TIMESTAMP 被当作 UTC 读出，接口返回的时间戳整体偏移 8 小时。
+RUN apk add --no-cache tzdata && \
+    adduser -D -u 1001 appuser && \
     chown -R appuser:appuser /app
 
 USER appuser

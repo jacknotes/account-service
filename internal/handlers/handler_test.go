@@ -414,6 +414,41 @@ func TestRecordHandler_Update_Delete_NotFound(t *testing.T) {
 	}
 }
 
+// TestRecordHandler_Update_PartialFields 回归：部分更新只校验请求中实际提供的字段。
+// 历史缺陷：只传 description（省略 date）会被判「日期格式必须为 YYYY-MM-DD」返回 400。
+func TestRecordHandler_Update_PartialFields(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"仅改描述（省略 date）", `{"description":"changed"}`, http.StatusOK},
+		{"仅改金额（省略 date）", `{"amount_cents":-2000}`, http.StatusOK},
+		{"仅改分类（省略 date）", `{"category":"交通"}`, http.StatusOK},
+		{"完整载荷", `{"date":"2024-01-15","amount_cents":-5000,"category":"餐饮","description":"x"}`, http.StatusOK},
+		{"提供非法 date", `{"date":"2024-13-99"}`, http.StatusBadRequest},
+		{"描述超长", `{"description":"` + strings.Repeat("长", 256) + `"}`, http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rh, _, _, _ := newTestHandler()
+			// 先建一条记录，确保 id=1 存在
+			rh.db.(*fakeRecordService).Create(context.Background(), &models.Record{Date: "2024-01-15", AmountCents: -5000}, 1)
+
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest("PUT", "/api/records/1", strings.NewReader(tc.body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Params = gin.Params{{Key: "id", Value: "1"}}
+			setupAuthContext(1, "u", "user")(c)
+			rh.UpdateRecord(c)
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d, body: %s", w.Code, tc.want, w.Body.String())
+			}
+		})
+	}
+}
+
 // ----------------------------------------------------------------------
 // category handler
 // ----------------------------------------------------------------------
